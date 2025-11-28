@@ -1,0 +1,10 @@
+numpy
+pandas
+yfinance
+cvxpy
+torch
+seaborn
+matplotlib
+scipy
+statsmodels
+pandas-datareader
