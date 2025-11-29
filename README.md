@@ -1,4 +1,4 @@
-# Differentiable Hierarchical Risk Parity
+# DDifferentiable Hierarchical Risk Parity:Learning to Allocate with End-to-End Gradient Optimization
 
 This repo contains a compact public-data implementation of Differentiable Hierarchical Risk Parity (DHRP) and the LaTeX source of the associated paper.
 
