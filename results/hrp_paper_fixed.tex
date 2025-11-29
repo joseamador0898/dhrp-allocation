@@ -16,12 +16,12 @@
 
 \begin{document}
 \title{Differentiable Hierarchical Risk Parity:\\Learning to Allocate with End-to-End Gradient Optimization}
-\author{Anonymous Authors}
+\author{Jose L. Amador}
 \date{}
 \maketitle
 
 \begin{abstract}
-This paper introduces Differentiable Hierarchical Risk Parity (DHRP), a neural network layer that rewrites the classical hierarchical risk parity algorithm as a fully differentiable map from market features and covariance estimates to portfolio weights. Classical HRP relies on a sequence of discrete clustering and recursive bisection steps, so its parameters cannot be tuned together with other model components using gradients. We replace those rigid steps with soft gating networks and learnable tree structures, which makes the entire allocation rule trainable end-to-end with stochastic gradient descent. The DHRP layer is trained with a multi-objective loss that combines constant relative risk aversion utility, a smooth Sharpe ratio term, and a regularizer that keeps the solution close to standard HRP. In out-of-sample tests on developed and emerging market ETF universes covering ten years of daily data, DHRP reaches Sharpe ratios of 1.08 and 0.11, while classical HRP delivers 0.94 and 0.06 on the same datasets. These gains are statistically significant, with t-statistics of 40.7 and 5.1 ($p < 0.0001$) for developed and emerging markets respectively. Overall, the results show that it is possible to keep the diversification discipline of HRP while using modern deep learning tools to obtain more stable and data-driven allocations.
+This paper introduces Differentiable Hierarchical Risk Parity (DHRP), a neural network layer that rewrites the classical hierarchical risk parity algorithm as a fully differentiable map from market features and covariance estimates to portfolio weights. Classical HRP relies on a sequence of discrete clustering and recursive bisection steps, so its parameters cannot be tuned together with other model components using gradients. We replace those rigid steps with soft gating networks and learnable tree structures, which makes the entire allocation rule trainable end-to-end with stochastic gradient descent. The DHRP layer is trained with a multi-objective loss that combines constant relative risk aversion utility, a smooth Sharpe ratio term, and a regularizer that keeps the solution close to standard HRP. In out-of-sample tests on developed and emerging market ETF universes covering ten years of daily data, DHRP reaches Sharpe ratios of 1.17 and 0.11, while classical HRP delivers 1.11 and 0.06 on the same datasets. The Sharpe ratios are highly significant when tested against zero, as expected given the long sample, and DHRP delivers Fama-French alphas of 6.2\% (t = 5.7) and $-$5.0\% (t = $-$0.9) for developed and emerging markets respectively. Overall, the results show that it is possible to keep the diversification discipline of HRP while using modern deep learning tools to obtain more stable and data-driven allocations.
 \end{abstract}
 
 \section{Introduction}
@@ -36,9 +36,9 @@ The starting point of this work is to ask whether one can keep the hierarchical 
 
 We train this layer with a loss that mirrors the objectives of a risk-averse investor. The main term is constant relative risk aversion (CRRA) utility, which trades off average return against downside risk. On top of this, we add a smooth Sharpe ratio term that encourages stable risk-adjusted performance, and a penalty that keeps the learned weights close to those of standard HRP, at least in the early part of training. This last term acts as a regularizer and as a way to inject prior knowledge about diversification.
 
-The empirical analysis uses ETF universes for developed and emerging markets over the period 2015--2025. We run rolling-window backtests with realistic rebalancing and compare DHRP to equal weight (EW), minimum variance (MINVAR), classical mean variance (MV), and traditional HRP. In developed markets, DHRP reaches an annualized Sharpe ratio of 1.08, compared to 0.94 for HRP and 0.74 for EW. In emerging markets, which are more volatile and more correlated, DHRP reaches a Sharpe ratio of 0.11 versus 0.06 for HRP, so the relative improvement is larger in that universe.
+The empirical analysis uses ETF universes for developed and emerging markets over the period 2015--2025. We run rolling-window backtests with realistic rebalancing and compare DHRP to equal weight (EW), minimum variance (MINVAR), classical mean variance (MV), and traditional HRP. In developed markets, DHRP reaches an annualized Sharpe ratio of 1.17, compared to 1.11 for HRP and 0.76 for EW. In emerging markets, which are more volatile and more correlated, DHRP reaches a Sharpe ratio of 0.11 versus 0.06 for HRP, so the relative improvement is larger in that universe.
 
-We also check that these differences are not driven by a small set of favorable dates. The Sharpe ratios of DHRP in developed and emerging markets have t-statistics of 40.7 and 5.1 respectively, both with $p < 0.0001$. Bootstrap confidence intervals tell the same story and show that DHRP does not lose its edge when the sample is perturbed.
+We also check that these differences are not driven by a small set of favorable dates. Bootstrap confidence intervals show that DHRP maintains its advantage when the sample is perturbed, and the Fama-French alpha of 6.2\% per year (t = 5.7, $p < 0.001$) confirms that the gains are not simply due to higher factor exposures.
 
 \paragraph{Contributions.} The contributions of this paper are mainly three. First, we give a differentiable version of HRP that can be trained with gradients while keeping the intuition of hierarchical diversification. Second, we describe a multi-objective training scheme that balances utility, risk-adjusted performance, and proximity to classical HRP. Third, we show on real ETF data that this approach produces clear out-of-sample gains over widely used allocation rules in both developed and emerging markets.
 
@@ -174,7 +174,7 @@ In the emerging market universe, MINVAR and MV are regularized to improve numeri
 We evaluate performance using the following statistics:
 \begin{itemize}
 \item \textbf{Sharpe Ratio:} Annualized excess return over risk-free rate divided by annualized volatility
-\item \textbf{HAC t-statistic:} t-statistic computed with Newey-West heteroskedasticity and autocorrelation consistent standard errors
+\item \textbf{HAC t-statistic:} t-statistic testing whether the Sharpe ratio is significantly different from zero, computed with Newey-West heteroskedasticity and autocorrelation consistent standard errors. Note: with daily data over 9 years, even modest Sharpe ratios will appear highly significant when tested against zero (t $\approx$ Sharpe $\times \sqrt{T}$)
 \item \textbf{Bootstrap Confidence Intervals:} 90\% confidence intervals from moving block bootstrap with 300 replications
 \item \textbf{Fama-French Alpha:} Intercept from regression on market, size, and value factors with HAC standard errors
 \item \textbf{Maximum Drawdown:} Largest peak-to-trough decline in cumulative returns
@@ -183,42 +183,42 @@ We evaluate performance using the following statistics:
 
 \subsection{Main Performance Comparison}
 
-Table~\ref{tab:dm} reports the main performance metrics for the developed market universe. DHRP attains the highest Sharpe ratio at 1.075, ahead of HRP (0.937), EW (0.738), MV (0.617), and MINVAR (0.466). Relative to HRP this is a gain of about 15\% in risk-adjusted performance. The t-statistic of 40.7 ($p < 0.0001$) shows that this difference is not marginal, and the 90\% bootstrap confidence interval of [0.51, 1.71] sits comfortably away from zero.
+Table~\ref{tab:dm} reports the main performance metrics for the developed market universe. DHRP attains the highest Sharpe ratio at 1.17, ahead of HRP (1.11), EW (0.76), MV (0.47), and MINVAR (0.50). Relative to HRP this is a gain of about 6\% in risk-adjusted performance. While the HAC t-statistics are large (reflecting the long sample period of 2260 daily observations), the 90\% bootstrap confidence interval of [0.60, 1.75] shows the Sharpe ratio is reliably positive.
 
 \begin{table}[t]
 \centering
-\caption{Developed market performance. DHRP achieves the highest Sharpe ratio with strong statistical significance. $t$-statistics test whether the Sharpe ratio differs from zero. All values are annualized where applicable.}
+\caption{Developed market performance. DHRP achieves the highest Sharpe ratio with strong Fama-French alpha. The HAC $t$-statistics test whether Sharpe ratios differ from zero; given 2260 daily observations, modest Sharpe ratios yield large t-stats ($t \approx SR \times \sqrt{T}$). All values are annualized where applicable.}
 \label{tab:dm}
 \begin{tabular}{lrrrrrrrrr}
 \toprule
 Method & Sharpe & $t$-stat & $p$-val & CI low & CI high & $\alpha$ (ann) & $\alpha$ $t$ & $\alpha$ $p$ \\
 \midrule
-DHRP   & 1.075 & 40.7 & $<$0.001 & 0.51 & 1.71 & 5.5\% & 4.82 & $<$0.001 \\
-EW     & 0.738 & 31.1 & $<$0.001 & 0.13 & 1.31 & 4.1\% & 2.70 & 0.007 \\
-HRP    & 0.937 & 37.2 & $<$0.001 & 0.37 & 1.49 & 5.8\% & 3.65 & $<$0.001 \\
-MINVAR & 0.466 & 21.0 & $<$0.001 & 0.01 & 0.96 & 3.4\% & 2.95 & 0.003 \\
-MV     & 0.617 & 26.9 & $<$0.001 & 0.16 & 1.12 & 9.7\% & 2.24 & 0.025 \\
+DHRP   & 1.173 & 60.5 & $<$0.001 & 0.60 & 1.75 & 6.2\% & 5.72 & $<$0.001 \\
+EW     & 0.758 & 36.2 & $<$0.001 & 0.18 & 1.40 & 4.4\% & 2.83 & 0.005 \\
+HRP    & 1.108 & 53.8 & $<$0.001 & 0.58 & 1.64 & 7.0\% & 4.32 & $<$0.001 \\
+MINVAR & 0.501 & 26.1 & $<$0.001 & $-$0.05 & 1.04 & 3.8\% & 3.18 & 0.002 \\
+MV     & 0.473 & 24.8 & $<$0.001 & 0.03 & 0.95 & 7.3\% & 1.62 & 0.106 \\
 \bottomrule
 \end{tabular}
 \end{table}
 
-The factor regressions show that DHRP delivers a Fama-French alpha of about 5.5\% per year with a t-statistic of 4.82 ($p < 0.001$), so the excess return is not simply the result of shifting to higher beta. In fact, the market beta is low at 0.17, which suggests that the higher Sharpe ratio is driven by genuine stock-selection or timing effects rather than by taking on more broad market risk.
+The factor regressions show that DHRP delivers a Fama-French alpha of about 6.2\% per year with a t-statistic of 5.72 ($p < 0.001$), so the excess return is not simply the result of shifting to higher beta. In fact, the market beta is low at 0.16, which suggests that the higher Sharpe ratio is driven by genuine allocation or timing effects rather than by taking on more broad market risk.
 
-Table~\ref{tab:em} gives the corresponding numbers for emerging markets. This universe is harder for all methods because assets are more correlated and volatility is higher. Even so, DHRP reaches a Sharpe ratio of 0.108 compared to 0.057 for HRP, which is a 90\% improvement. As expected the absolute Sharpe ratios are below those of developed markets, but the relative ordering and the size of the improvement are still meaningful.
+Table~\ref{tab:em} gives the corresponding numbers for emerging markets. This universe is harder for all methods because assets are more correlated and volatility is higher. Even so, DHRP reaches a Sharpe ratio of 0.11 compared to 0.06 for HRP, which is a 73\% improvement. As expected the absolute Sharpe ratios are below those of developed markets, but the relative ordering and the size of the improvement are still meaningful.
 
 \begin{table}[t]
 \centering
-\caption{Emerging market performance. DHRP improves on classical HRP by 90\% in this challenging high-correlation environment. The $p$-values confirm that most methods achieve Sharpe ratios significantly different from zero.}
+\caption{Emerging market performance. DHRP improves on classical HRP by 73\% in this challenging high-correlation environment. The large HAC $t$-statistics reflect the sample size; even small Sharpe ratios are statistically significant against zero with 2260 daily observations.}
 \label{tab:em}
 \begin{tabular}{lrrrrrrrrr}
 \toprule
 Method & Sharpe & $t$-stat & $p$-val & CI low & CI high & $\alpha$ (ann) & $\alpha$ $t$ & $\alpha$ $p$ \\
 \midrule
-DHRP   & 0.108 &  5.11 & $<$0.001 & $-$0.41 & 0.64 & $-$5.0\% & $-$0.85 & 0.40 \\
-EW     & 0.118 &  5.58 & $<$0.001 & $-$0.45 & 0.74 & $-$4.9\% & $-$0.81 & 0.42 \\
-HRP    & 0.057 &  2.70 & 0.007 & $-$0.53 & 0.68 & $-$5.8\% & $-$1.01 & 0.31 \\
-MINVAR & $-$0.026 & $-$1.22 & 0.22 & $-$0.55 & 0.57 & $-$7.1\% & $-$1.25 & 0.21 \\
-MV     & $-$0.096 & $-$4.53 & $<$0.001 & $-$0.67 & 0.51 & $-$9.9\% & $-$1.36 & 0.17 \\
+DHRP   & 0.111 &  5.36 & $<$0.001 & $-$0.43 & 0.66 & $-$5.0\% & $-$0.86 & 0.39 \\
+EW     & 0.121 &  5.86 & $<$0.001 & $-$0.46 & 0.71 & $-$4.8\% & $-$0.82 & 0.41 \\
+HRP    & 0.064 &  3.05 & 0.002 & $-$0.52 & 0.64 & $-$5.7\% & $-$1.00 & 0.32 \\
+MINVAR & $-$0.012 & $-$0.57 & 0.57 & $-$0.54 & 0.58 & $-$6.8\% & $-$1.22 & 0.22 \\
+MV     & $-$0.082 & $-$3.67 & $<$0.001 & $-$0.76 & 0.52 & $-$9.3\% & $-$1.32 & 0.19 \\
 \bottomrule
 \end{tabular}
 \end{table}
@@ -322,7 +322,7 @@ An additional look at information ratios (not shown in a table) indicates that D
 
 This paper has presented Differentiable Hierarchical Risk Parity, a neural network layer that turns classical HRP into a fully differentiable mapping suitable for end to end training with gradient based methods. The core HRP idea of distributing risk down a hierarchy is kept intact, but the non-differentiable clustering and bisection steps are replaced by smooth gating mechanisms.
 
-On ETF universes for developed and emerging markets, DHRP delivers gains in risk adjusted performance over a set of standard benchmarks. In developed markets it reaches a Sharpe ratio of 1.08 versus 0.94 for HRP and 0.74 for equal weight, with a t statistic of 40.7 ($p < 0.0001$) and a 90\% bootstrap confidence interval of [0.51, 1.71]. The associated Fama French alpha is about 5.5\% per year (t statistic 4.82, $p < 0.001$), and the maximum drawdown is limited to 9.6\%, compared to 16.3\% for equal weight and 21.1\% for mean variance. In emerging markets, DHRP attains a Sharpe ratio of 0.11 against 0.06 for HRP (t statistic 5.11, $p < 0.0001$) and closely trails equal weight at 0.12 (t statistic 5.58), with maximum drawdowns around 50\% across all methods.
+On ETF universes for developed and emerging markets, DHRP delivers gains in risk adjusted performance over a set of standard benchmarks. In developed markets it reaches a Sharpe ratio of 1.17 versus 1.11 for HRP and 0.76 for equal weight, with a 90\% bootstrap confidence interval of [0.60, 1.75]. The associated Fama French alpha is about 6.2\% per year (t statistic 5.72, $p < 0.001$), and the maximum drawdown is limited to 9.6\%, compared to 16.3\% for equal weight. In emerging markets, DHRP attains a Sharpe ratio of 0.11 against 0.06 for HRP, closely trailing equal weight at 0.12, with maximum drawdowns around 50\% across all methods.
 
 Viewed through the lens of representation learning, DHRP suggests that architectural priors can matter as much as model scale. The layer learns routing patterns that respond to market conditions but remain tied to the HRP hierarchy, so allocations are both adaptive and interpretable. Rather than treating diversification as an external constraint, the diversification logic is built into the architecture and then tuned by data, which is closer in spirit to recent work on structured and neurosymbolic models than to generic black box policies.
 
@@ -332,6 +332,7 @@ There are several natural next steps. One is to plug the DHRP layer into richer 
 
 Taken together, the numerical results and diagnostics indicate that combining explicit domain structure with modern learning tools is a useful path. By encoding the diversification logic of HRP directly in the architecture and then letting the data tune the soft decisions, DHRP occupies a middle ground between handcrafted rules and unconstrained models and delivers consistent improvements in realized Sharpe ratios, alphas, and drawdown profiles.
 
+\clearpage
 \bibliographystyle{plainnat}
 \begin{thebibliography}{20}
 
