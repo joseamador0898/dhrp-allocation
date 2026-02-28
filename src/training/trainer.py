@@ -1,0 +1,251 @@
+"""Training loops for DHRP, LLM-DHRP, and deep baseline models."""
+
+import numpy as np
+import torch
+import torch.optim as optim
+
+from ..models.dhrp_layer import DHRPLayer
+from ..models.llm_dhrp_layer import LLMDHRPLayer
+from ..models.loss_functions import dhrp_loss
+from ..data.feature_engineering import build_dataset, make_features, DEFAULT_FDIM
+
+
+def train_dhrp(prices, device="cpu", is_em=False, volume=None, fdim=DEFAULT_FDIM):
+    """Train DHRP model on historical price data."""
+    X, S, R, H = build_dataset(prices, is_em=is_em, volume=volume, fdim=fdim)
+    if X.ndim == 1 or X.shape[0] < 50:
+        raise ValueError(f"Insufficient data: {X.shape[0] if X.ndim > 1 else 0}")
+    n_samp, fdim_actual, n_assets = X.shape[0], X.shape[1], prices.shape[1]
+    mkt = "EM" if is_em else "DM"
+    print(f"  [{mkt}] {n_samp} samples, {n_assets} assets, fdim={fdim_actual}")
+
+    hid, wd, lr = (32, 1e-3, 1.5e-4) if is_em else (64, 3e-4, 4.5e-4)
+    epochs, clip = (50, 0.5) if is_em else (40, 1.0)
+    hrp_s, hrp_e = (0.6, 0.3) if is_em else (0.3, 0.1)
+
+    model = DHRPLayer(n_assets, fdim_actual, hidden_dim=hid, is_em=is_em).to(device)
+    opt = optim.AdamW(model.parameters(), lr=lr, weight_decay=wd)
+    sched = optim.lr_scheduler.CosineAnnealingLR(opt, T_max=epochs, eta_min=lr / 20)
+
+    Xt = torch.from_numpy(X).to(device)
+    St = torch.from_numpy(S).to(device)
+    Rt = torch.from_numpy(R).to(device)
+
+    best_loss, best_st = float("inf"), None
+    for ep in range(epochs):
+        perm = torch.randperm(n_samp)
+        Xs, Ss, Rs = Xt[perm], St[perm], Rt[perm]
+        Hs = H[perm.cpu().numpy()]
+        ep_loss, nb = 0.0, 0
+        lam = hrp_s - (hrp_s - hrp_e) * (ep / epochs)
+
+        for s in range(0, n_samp, 32):
+            e = min(s + 32, n_samp)
+            opt.zero_grad()
+            loss = dhrp_loss(
+                model, Xs[s:e], Ss[s:e], Rs[s:e], Hs[s:e],
+                is_em=is_em, lam_hrp=lam,
+            )
+            if not torch.isnan(loss) and loss.requires_grad:
+                loss.backward()
+                torch.nn.utils.clip_grad_norm_(model.parameters(), clip)
+                opt.step()
+                ep_loss += loss.item()
+                nb += 1
+        sched.step()
+
+        if nb > 0:
+            avg = ep_loss / nb
+            if avg < best_loss:
+                best_loss = avg
+                best_st = {k: v.cpu().clone() for k, v in model.state_dict().items()}
+            if (ep + 1) % 10 == 0 or ep == 0:
+                print(f"  [{mkt}] Epoch {ep + 1}/{epochs}, loss={avg:.6f}")
+
+    if best_st:
+        model.load_state_dict({k: v.to(device) for k, v in best_st.items()})
+    return model
+
+
+def train_llm_dhrp(
+    prices,
+    text_features=None,
+    macro_features=None,
+    device="cpu",
+    is_em=False,
+    text_dim=768,
+    use_text=True,
+    use_macro=False,
+    macro_dim=4,
+    fusion_type="cross_attention",
+    depth=3,
+    hidden_dim=64,
+    epochs=60,
+    lr=3e-4,
+    weight_decay=3e-4,
+    batch_size=32,
+    grad_clip=1.0,
+    hrp_lam_start=0.3,
+    hrp_lam_end=0.05,
+    use_hrp_reg=True,
+    volume=None,
+    fdim=DEFAULT_FDIM,
+):
+    """Train LLM-enhanced DHRP model.
+
+    Args:
+        prices: DataFrame of adjusted close prices
+        text_features: dict with 'finbert' (n_samples, n_assets, 768) and/or
+                       'sentiment' (n_samples, n_assets, 16), or None
+        macro_features: np.ndarray (n_samples, macro_dim), or None
+        device: compute device
+        is_em: emerging markets flag
+        text_dim: LLM embedding dimension (768 for FinBERT)
+        use_text / use_macro: feature toggles
+        fusion_type: "cross_attention", "concat", or "additive"
+        depth: tree depth
+        epochs, lr, weight_decay, batch_size, grad_clip: training hyperparams
+        hrp_lam_start / hrp_lam_end: HRP regularization schedule
+        use_hrp_reg: whether to use HRP regularization
+        volume: DataFrame of daily volume, or None
+        fdim: feature dimension
+    Returns:
+        trained LLMDHRPLayer model
+    """
+    X, S, R, H = build_dataset(prices, is_em=is_em, volume=volume, fdim=fdim)
+    if X.ndim == 1 or X.shape[0] < 50:
+        raise ValueError(f"Insufficient data: {X.shape[0] if X.ndim > 1 else 0}")
+    n_samp, fdim_actual, n_assets = X.shape[0], X.shape[1], prices.shape[1]
+    mkt = "EM" if is_em else "DM"
+    print(f"  [{mkt}] {n_samp} samples, {n_assets} assets, fdim={fdim_actual} (LLM-DHRP)")
+
+    # Prepare text embeddings — average across assets for a global signal
+    text_embs = None
+    if use_text and text_features is not None:
+        if "finbert" in text_features and text_features["finbert"] is not None:
+            fb = text_features["finbert"]  # (n_dates, n_assets, 768)
+            n_text = min(fb.shape[0], n_samp)
+            text_embs = fb[:n_text].mean(axis=1)  # (n_text, 768)
+            if n_text < n_samp:
+                pad = np.zeros((n_samp - n_text, text_embs.shape[1]), dtype=np.float32)
+                text_embs = np.vstack([text_embs, pad])
+            print(f"  [{mkt}] Text features: {text_embs.shape}")
+
+    # Prepare macro features
+    macro_feats = None
+    if use_macro and macro_features is not None:
+        n_macro = min(macro_features.shape[0], n_samp)
+        macro_feats = macro_features[:n_macro]
+        if n_macro < n_samp:
+            pad = np.zeros((n_samp - n_macro, macro_feats.shape[1]), dtype=np.float32)
+            macro_feats = np.vstack([macro_feats, pad])
+        macro_dim = macro_feats.shape[1]
+        print(f"  [{mkt}] Macro features: {macro_feats.shape}")
+
+    model = LLMDHRPLayer(
+        n_assets=n_assets, feature_dim=fdim_actual, text_dim=text_dim,
+        hidden_dim=hidden_dim, depth=depth, is_em=is_em,
+        use_text=use_text and text_embs is not None,
+        use_macro=use_macro and macro_feats is not None,
+        macro_dim=macro_dim, fusion_type=fusion_type,
+    ).to(device)
+    n_params = sum(p.numel() for p in model.parameters())
+    print(f"  [{mkt}] Model params: {n_params:,}")
+
+    opt = optim.AdamW(model.parameters(), lr=lr, weight_decay=weight_decay)
+    sched = optim.lr_scheduler.CosineAnnealingLR(opt, T_max=epochs, eta_min=lr / 20)
+
+    Xt = torch.from_numpy(X).to(device)
+    St = torch.from_numpy(S).to(device)
+    Rt = torch.from_numpy(R).to(device)
+    Tt = torch.from_numpy(text_embs).to(device) if text_embs is not None else None
+    Mt = torch.from_numpy(macro_feats.astype(np.float32)).to(device) if macro_feats is not None else None
+
+    best_loss, best_st = float("inf"), None
+    for ep in range(epochs):
+        perm = torch.randperm(n_samp)
+        Xs, Ss, Rs = Xt[perm], St[perm], Rt[perm]
+        Hs = H[perm.cpu().numpy()]
+        Ts = Tt[perm] if Tt is not None else None
+        Ms = Mt[perm] if Mt is not None else None
+        ep_loss, nb = 0.0, 0
+        lam = hrp_lam_start - (hrp_lam_start - hrp_lam_end) * (ep / epochs) if use_hrp_reg else 0.0
+
+        for s in range(0, n_samp, batch_size):
+            e = min(s + batch_size, n_samp)
+            opt.zero_grad()
+            loss = _llm_dhrp_loss(
+                model, Xs[s:e], Ss[s:e], Rs[s:e], Hs[s:e],
+                text_embs=Ts[s:e] if Ts is not None else None,
+                macro_feats=Ms[s:e] if Ms is not None else None,
+                is_em=is_em, lam_hrp=lam,
+            )
+            if not torch.isnan(loss) and loss.requires_grad:
+                loss.backward()
+                torch.nn.utils.clip_grad_norm_(model.parameters(), grad_clip)
+                opt.step()
+                ep_loss += loss.item()
+                nb += 1
+        sched.step()
+
+        if nb > 0:
+            avg = ep_loss / nb
+            if avg < best_loss:
+                best_loss = avg
+                best_st = {k: v.cpu().clone() for k, v in model.state_dict().items()}
+            if (ep + 1) % 10 == 0 or ep == 0:
+                print(f"  [{mkt}] Epoch {ep + 1}/{epochs}, loss={avg:.6f}")
+
+    if best_st:
+        model.load_state_dict({k: v.to(device) for k, v in best_st.items()})
+    return model
+
+
+def _llm_dhrp_loss(model, xb, Sb, rb, hrp_w, text_embs=None, macro_feats=None,
+                   is_em=False, lam_hrp=0.3):
+    """Multi-objective loss for LLM-DHRP."""
+    port_r, wts = [], []
+    for t in range(rb.shape[0]):
+        te = text_embs[t] if text_embs is not None else None
+        mf = macro_feats[t] if macro_feats is not None else None
+        w = model(xb[t], Sb[t], text_emb=te, macro_feat=mf)
+        wts.append(w)
+        port_r.append((w * rb[t]).sum())
+    port_r = torch.stack(port_r)
+    wts = torch.stack(wts)
+    port_r = torch.clamp(port_r, -0.5, 0.5)
+
+    gamma = 1.2 if is_em else 2.5
+    crra = (
+        (torch.clamp(1 + port_r, min=0.1) ** (1 - gamma) - 1) / (1 - gamma)
+    ).mean()
+    sharpe = port_r.mean() / (port_r.std() + 1e-6) * (0.09 if is_em else 0.18)
+    hrp_target = torch.from_numpy(hrp_w).to(xb.device).float()
+    hrp_reg = ((wts - hrp_target) ** 2).mean() * lam_hrp * (1.5 if is_em else 0.8)
+    risk = (
+        torch.stack([wts[t] @ Sb[t] @ wts[t] for t in range(rb.shape[0])]).mean()
+        * (0.004 if is_em else 0.001)
+    )
+    entropy = (-(wts * torch.log(wts + 1e-8)).sum(1).mean() * 0.15) if is_em else 0
+    loss = -(crra + sharpe + entropy) + hrp_reg + risk
+    if torch.isnan(loss):
+        return torch.tensor(0.0, device=xb.device, requires_grad=True)
+    return loss
+
+
+def dhrp_weights(model, rets, is_em=False, volume=None):
+    """Compute portfolio weights from a trained DHRP model."""
+    try:
+        cov = (rets.cov().values * 252).astype(np.float32)
+        if is_em:
+            cov += np.eye(cov.shape[0]) * 0.01
+        feat = make_features(rets, model.feature_dim, is_em, volume=volume).astype(np.float32)
+        with torch.no_grad():
+            w = model(
+                torch.from_numpy(np.nan_to_num(feat)),
+                torch.from_numpy(np.nan_to_num(cov)),
+            ).cpu().numpy()
+        w = np.nan_to_num(np.clip(w, 0, 1))
+        return w / w.sum() if w.sum() > 0 else np.ones(len(w)) / len(w)
+    except Exception:
+        return np.ones(rets.shape[1]) / rets.shape[1]

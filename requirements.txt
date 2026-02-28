@@ -1,0 +1,22 @@
+# Core
+numpy
+pandas
+scipy
+statsmodels
+torch
+cvxpy
+
+# Data sources
+requests
+pandas-datareader
+python-dotenv
+fredapi
+
+# Visualization
+seaborn
+matplotlib
+
+# LLM features (install when running FinBERT extraction)
+transformers>=4.46
+tokenizers>=0.20
+huggingface-hub>=0.26

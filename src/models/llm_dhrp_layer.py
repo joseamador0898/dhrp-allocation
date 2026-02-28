@@ -1,0 +1,303 @@
+"""LLM-enhanced DHRP layer with cross-modal fusion.
+
+This module implements the key architectural contribution: LLM features
+modulate the routing decisions in the soft gating tree. Financial text
+like "Fed signals rate hike" changes which branch of the hierarchy
+receives more allocation — language provides a regime routing signal
+that aligns naturally with the tree structure.
+"""
+
+import numpy as np
+import torch
+import torch.nn as nn
+import torch.nn.functional as F
+
+
+class TextProjectionNetwork(nn.Module):
+    """Projects LLM embeddings into the same space as price features."""
+
+    def __init__(self, text_dim, target_dim, hidden_dim=128, dropout=0.1):
+        super().__init__()
+        self.net = nn.Sequential(
+            nn.Linear(text_dim, hidden_dim),
+            nn.GELU(),
+            nn.Dropout(dropout),
+            nn.Linear(hidden_dim, target_dim),
+            nn.LayerNorm(target_dim),
+        )
+
+    def forward(self, text_emb):
+        return self.net(text_emb)
+
+
+class CrossModalFusion(nn.Module):
+    """Cross-attention fusion between price features and text features.
+
+    Uses a gated fusion mechanism: the model learns how much to attend
+    to language signals vs price signals at each timestep.
+    """
+
+    def __init__(self, feature_dim, n_heads=4, dropout=0.1):
+        super().__init__()
+        self.cross_attn = nn.MultiheadAttention(
+            feature_dim, n_heads, dropout=dropout, batch_first=True,
+        )
+        self.gate = nn.Sequential(
+            nn.Linear(feature_dim * 2, feature_dim),
+            nn.Sigmoid(),
+        )
+        self.norm = nn.LayerNorm(feature_dim)
+
+    def forward(self, price_feat, text_feat):
+        """Fuse price and text features via gated cross-attention.
+
+        Args:
+            price_feat: (feature_dim,) price feature vector
+            text_feat: (feature_dim,) projected text feature vector
+        Returns:
+            (feature_dim,) fused feature vector
+        """
+        # Reshape for attention: (1, 1, feature_dim) — single-step
+        p = price_feat.unsqueeze(0).unsqueeze(0) if price_feat.dim() == 1 else price_feat.unsqueeze(1)
+        t = text_feat.unsqueeze(0).unsqueeze(0) if text_feat.dim() == 1 else text_feat.unsqueeze(1)
+
+        # Cross-attend: price queries, text keys/values
+        attn_out, _ = self.cross_attn(p, t, t)
+        attn_out = attn_out.squeeze(1).squeeze(0) if price_feat.dim() == 1 else attn_out.squeeze(1)
+
+        # Gated fusion
+        gate_val = self.gate(torch.cat([price_feat, attn_out], dim=-1))
+        fused = gate_val * attn_out + (1 - gate_val) * price_feat
+        return self.norm(fused)
+
+
+class LLMDHRPLayer(nn.Module):
+    """LLM-enhanced Differentiable HRP.
+
+    Architecture:
+        price_features (48d) ──┐
+                                ├── CrossModalFusion ──> DHRPTree ──> weights
+        text_features  (48d) ──┘
+                                        ↑
+                             covariance_features
+
+    The text features modulate which branches of the tree receive more
+    allocation weight — providing a regime routing signal.
+    """
+
+    def __init__(
+        self,
+        n_assets,
+        feature_dim=48,
+        text_dim=768,
+        hidden_dim=64,
+        depth=3,
+        is_em=False,
+        use_text=True,
+        use_macro=False,
+        macro_dim=4,
+        fusion_type="cross_attention",
+        dropout=0.1,
+    ):
+        super().__init__()
+        self.n_assets = n_assets
+        self.feature_dim = feature_dim
+        self.text_dim = text_dim
+        self.is_em = is_em
+        self.use_text = use_text
+        self.use_macro = use_macro
+        self.n_leaves = 2 ** depth
+        self.n_internal = 2 ** depth - 1
+        self.fusion_type = fusion_type
+
+        self.register_buffer(
+            "asset_to_leaf", torch.arange(n_assets) % self.n_leaves
+        )
+
+        # Text projection: map LLM embeddings to feature_dim
+        if use_text:
+            self.text_proj = TextProjectionNetwork(
+                text_dim, feature_dim, hidden_dim=hidden_dim * 2, dropout=dropout,
+            )
+            if fusion_type == "cross_attention":
+                self.fusion = CrossModalFusion(feature_dim, n_heads=4, dropout=dropout)
+            elif fusion_type == "concat":
+                self.fusion_proj = nn.Sequential(
+                    nn.Linear(feature_dim * 2, feature_dim),
+                    nn.LayerNorm(feature_dim),
+                    nn.ReLU(),
+                )
+            # else: additive (no extra params)
+
+        # Macro feature projection
+        if use_macro:
+            self.macro_proj = nn.Sequential(
+                nn.Linear(macro_dim, feature_dim // 2),
+                nn.ReLU(),
+                nn.Linear(feature_dim // 2, feature_dim),
+            )
+            self.macro_gate = nn.Sequential(
+                nn.Linear(feature_dim * 2, feature_dim),
+                nn.Sigmoid(),
+            )
+
+        # Covariance projection
+        cov_h = hidden_dim if is_em else hidden_dim * 2
+        self.feat_norm = nn.LayerNorm(feature_dim)
+        self.cov_proj = nn.Sequential(
+            nn.Linear(n_assets ** 2, cov_h),
+            nn.Tanh(),
+            nn.Linear(cov_h, feature_dim),
+        )
+
+        # Soft gating tree
+        gate_h = hidden_dim // 2 if is_em else hidden_dim
+        self.gates = nn.ModuleList([
+            nn.Sequential(
+                nn.Linear(feature_dim, gate_h),
+                nn.Tanh(),
+                nn.Linear(gate_h, 2),
+            )
+            for _ in range(self.n_internal)
+        ])
+        self.leaf_logits = nn.Parameter(torch.zeros(self.n_leaves))
+        self.vol_weight = nn.Parameter(torch.tensor(0.2 if is_em else 0.6))
+
+        # Pre-compute tree paths for depth-3 binary tree
+        self._paths = self._build_paths(depth)
+
+    @staticmethod
+    def _build_paths(depth):
+        """Build root-to-leaf paths for a perfect binary tree."""
+        n_leaves = 2 ** depth
+        paths = []
+        for leaf in range(n_leaves):
+            path = []
+            node = 0
+            idx = leaf
+            for d in range(depth):
+                bit = (idx >> (depth - 1 - d)) & 1
+                path.append((node, bit))
+                node = 2 * node + 1 + bit
+            paths.append(path)
+        return paths
+
+    def _fuse_features(self, price_feat, text_emb=None, macro_feat=None):
+        """Fuse price, text, and macro features."""
+        feat = price_feat
+
+        if self.use_text and text_emb is not None:
+            text_feat = self.text_proj(text_emb)
+            if self.fusion_type == "cross_attention":
+                feat = self.fusion(feat, text_feat)
+            elif self.fusion_type == "concat":
+                feat = self.fusion_proj(torch.cat([feat, text_feat], dim=-1))
+            else:  # additive
+                feat = feat + text_feat
+
+        if self.use_macro and macro_feat is not None:
+            macro_projected = self.macro_proj(macro_feat)
+            gate = self.macro_gate(torch.cat([feat, macro_projected], dim=-1))
+            feat = feat + gate * macro_projected
+
+        return feat
+
+    def forward(self, x_t, Sigma_t, text_emb=None, macro_feat=None):
+        """Forward pass.
+
+        Args:
+            x_t: (feature_dim,) price feature vector
+            Sigma_t: (n_assets, n_assets) covariance matrix
+            text_emb: (text_dim,) LLM embedding vector, or None
+            macro_feat: (macro_dim,) macro feature vector, or None
+        Returns:
+            (n_assets,) portfolio weights summing to 1
+        """
+        # Fuse multimodal features
+        fused_feat = self._fuse_features(x_t, text_emb, macro_feat)
+
+        # Add covariance information
+        Sigma_norm = Sigma_t / (Sigma_t.abs().max() + 1e-6)
+        node_feat = self.feat_norm(fused_feat + self.cov_proj(Sigma_norm.reshape(-1)))
+
+        # Soft gating tree
+        temp = 3.0 if self.is_em else 1.5
+        probs = [F.softmax(g(node_feat) / temp, dim=-1) for g in self.gates]
+
+        leaf_w = torch.stack([
+            torch.prod(torch.stack([probs[n][d] for n, d in p]))
+            for p in self._paths
+        ])
+
+        leaf_b = F.softmax(self.leaf_logits, dim=0) * leaf_w
+        leaf_b = leaf_b / (leaf_b.sum() + 1e-8)
+
+        # Map leaves to assets
+        asset_b = torch.zeros(self.n_assets, device=x_t.device)
+        for i in range(self.n_assets):
+            asset_b[i] += leaf_b[int(self.asset_to_leaf[i].item())]
+
+        # Inverse-volatility blending
+        vols = torch.sqrt(torch.clamp(torch.diag(Sigma_t), min=1e-8))
+        inv_vol = (1.0 / vols) / ((1.0 / vols).sum() + 1e-8)
+        alpha = torch.sigmoid(self.vol_weight)
+
+        if self.is_em:
+            cons_w = (
+                0.5 * inv_vol
+                + 0.5 * torch.ones(self.n_assets, device=x_t.device) / self.n_assets
+            )
+            final = alpha * asset_b + (1 - alpha) * cons_w
+        else:
+            final = alpha * asset_b + (1 - alpha) * inv_vol
+
+        return torch.clamp(final, min=1e-6) / torch.clamp(final, min=1e-6).sum()
+
+    def get_gating_probs(self, x_t, Sigma_t, text_emb=None, macro_feat=None):
+        """Return gating probabilities for interpretability analysis."""
+        fused_feat = self._fuse_features(x_t, text_emb, macro_feat)
+        Sigma_norm = Sigma_t / (Sigma_t.abs().max() + 1e-6)
+        node_feat = self.feat_norm(fused_feat + self.cov_proj(Sigma_norm.reshape(-1)))
+        temp = 3.0 if self.is_em else 1.5
+        return [F.softmax(g(node_feat) / temp, dim=-1).detach() for g in self.gates]
+
+    def get_routing_shift(self, x_t, Sigma_t, text_emb=None, macro_feat=None):
+        """Quantify text impact on each node's routing decision.
+
+        Compares gating probs with and without text features.
+        Returns dict with per-node routing shift magnitudes.
+        """
+        probs_with = self.get_gating_probs(x_t, Sigma_t, text_emb, macro_feat)
+        probs_without = self.get_gating_probs(x_t, Sigma_t, text_emb=None, macro_feat=macro_feat)
+
+        shifts = {}
+        for i, (pw, pwo) in enumerate(zip(probs_with, probs_without)):
+            delta = (pw - pwo).abs().sum().item()
+            shifts[f"node_{i}"] = delta
+        shifts["total"] = sum(shifts.values())
+        shifts["root"] = (probs_with[0] - probs_without[0])[0].item()  # P(left) shift at root
+        return shifts
+
+    def get_text_gate_values(self, x_t, Sigma_t, text_emb=None, macro_feat=None):
+        """Return the fusion gate values (how much the model attends to text vs price).
+
+        Only meaningful when fusion_type='cross_attention'.
+        """
+        if not self.use_text or text_emb is None:
+            return None
+
+        text_feat = self.text_proj(text_emb)
+        if self.fusion_type == "cross_attention":
+            # Replicate the gated fusion to extract gate values
+            price_feat = x_t
+            p = price_feat.unsqueeze(0).unsqueeze(0) if price_feat.dim() == 1 else price_feat.unsqueeze(1)
+            t = text_feat.unsqueeze(0).unsqueeze(0) if text_feat.dim() == 1 else text_feat.unsqueeze(1)
+            attn_out, attn_weights = self.fusion.cross_attn(p, t, t)
+            attn_out = attn_out.squeeze(1).squeeze(0) if price_feat.dim() == 1 else attn_out.squeeze(1)
+            gate_val = self.fusion.gate(torch.cat([price_feat, attn_out], dim=-1))
+            return {
+                "gate_mean": gate_val.mean().item(),
+                "gate_std": gate_val.std().item(),
+                "attn_weights": attn_weights.detach() if attn_weights is not None else None,
+            }
+        return None

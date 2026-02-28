@@ -1,0 +1,198 @@
+"""Rolling-window backtest engine supporting all portfolio methods.
+
+Supports:
+- Classical baselines: EW, MINVAR, MV, HRP, RP, MAXDIV
+- DHRP (differentiable HRP)
+- LLM-DHRP (LLM-enhanced differentiable HRP)
+- Deep baselines: TransformerPolicy, PPO
+"""
+
+import numpy as np
+import pandas as pd
+
+from ..models.baselines import (
+    equal_weight, min_variance, mean_variance, hrp_allocation,
+    risk_parity, max_diversification,
+)
+from ..training.trainer import dhrp_weights
+
+# Default backtest parameters
+TRAIN_DAYS = 252
+TEST_DAYS = 21
+STEP_DAYS = 21
+MIN_COVERAGE = 0.95
+PURGE_DAYS = 5  # gap between train and test to prevent look-ahead
+METHODS = ["EW", "MINVAR", "MV", "HRP", "RP", "MAXDIV", "DHRP"]
+
+
+def rolling_backtest(
+    prices,
+    is_em=False,
+    dhrp_model=None,
+    llm_dhrp_model=None,
+    text_features=None,
+    macro_features=None,
+    methods=None,
+    train_days=TRAIN_DAYS,
+    test_days=TEST_DAYS,
+    step_days=STEP_DAYS,
+    min_coverage=MIN_COVERAGE,
+    transaction_cost_bps=0,
+    volume=None,
+    purge_days=PURGE_DAYS,
+):
+    """Run rolling-window backtest over all methods.
+
+    Args:
+        prices: DataFrame of adjusted close prices
+        is_em: whether this is an emerging markets universe
+        dhrp_model: trained DHRPLayer, or None
+        llm_dhrp_model: trained LLMDHRPLayer, or None
+        text_features: dict with 'finbert' and/or 'sentiment' arrays, or None
+        macro_features: DataFrame of macro features, or None
+        methods: list of method names to backtest
+        train_days: rolling training window size
+        test_days: forward test window size
+        step_days: step between rebalance dates
+        min_coverage: minimum data coverage required
+        transaction_cost_bps: transaction costs in basis points
+        volume: DataFrame of daily volume, or None
+        purge_days: gap between train and test windows
+    Returns:
+        DataFrame with columns [method, date, return]
+    """
+    if methods is None:
+        methods = METHODS
+    rets = prices.pct_change().dropna()
+    results = []
+    prev_weights = {}
+    rebalance_idx = 0
+
+    for t in range(train_days, len(rets), step_days):
+        # Apply purge gap: train ends purge_days before test starts
+        train_end = t - purge_days if purge_days > 0 else t
+        if train_end <= train_days:
+            rebalance_idx += 1
+            continue
+        train = rets.iloc[train_end - train_days : train_end].fillna(0)
+        if train.isna().mean().mean() > (1 - min_coverage):
+            rebalance_idx += 1
+            continue
+        mu = train.mean().values * 252
+        cov = train.cov().values * 252 + np.eye(train.shape[1]) * (0.001 if is_em else 1e-6)
+        test = rets.iloc[t : t + test_days].fillna(0)
+        if test.empty:
+            rebalance_idx += 1
+            continue
+
+        # Volume window for this rebalance
+        vol_window = None
+        if volume is not None and not volume.empty:
+            vol_window = volume.iloc[max(0, train_end - train_days) : train_end]
+
+        for m in methods:
+            try:
+                w = _compute_weights(
+                    m, mu, cov, train, is_em,
+                    dhrp_model=dhrp_model,
+                    llm_dhrp_model=llm_dhrp_model,
+                    text_features=text_features,
+                    macro_features=macro_features,
+                    rebalance_idx=rebalance_idx,
+                    rebalance_date=rets.index[t],
+                    volume=vol_window,
+                )
+                if w is None:
+                    continue
+
+                # Transaction cost adjustment
+                tc_drag = 0.0
+                if transaction_cost_bps > 0 and m in prev_weights:
+                    turnover = np.sum(np.abs(w - prev_weights[m]))
+                    tc_drag = turnover * transaction_cost_bps / 10000
+                prev_weights[m] = w.copy()
+
+                for i, r in enumerate((test.values @ w).flatten()):
+                    adj_r = float(r) - (tc_drag / test_days if i == 0 else 0)
+                    results.append({"method": m, "date": test.index[i], "return": adj_r})
+            except Exception:
+                pass
+
+        rebalance_idx += 1
+
+    return pd.DataFrame(results)
+
+
+def _compute_weights(
+    method, mu, cov, train_rets, is_em,
+    dhrp_model=None, llm_dhrp_model=None,
+    text_features=None, macro_features=None,
+    rebalance_idx=0, rebalance_date=None,
+    volume=None,
+):
+    """Compute portfolio weights for a given method."""
+    if method == "EW":
+        return equal_weight(mu, cov)
+    elif method == "MINVAR":
+        return min_variance(mu, cov, is_em)
+    elif method == "MV":
+        return mean_variance(mu, cov, is_em)
+    elif method == "HRP":
+        return hrp_allocation(cov)
+    elif method == "RP":
+        return risk_parity(cov)
+    elif method == "MAXDIV":
+        return max_diversification(mu, cov)
+    elif method == "DHRP" and dhrp_model is not None:
+        return dhrp_weights(dhrp_model, train_rets, is_em, volume=volume)
+    elif method == "LLM_DHRP" and llm_dhrp_model is not None:
+        return _llm_dhrp_weights(
+            llm_dhrp_model, train_rets, is_em,
+            text_features, macro_features,
+            rebalance_idx, rebalance_date,
+            volume=volume,
+        )
+    return None
+
+
+def _llm_dhrp_weights(
+    model, rets, is_em,
+    text_features, macro_features,
+    rebalance_idx, rebalance_date,
+    volume=None,
+):
+    """Compute LLM-DHRP portfolio weights."""
+    import torch
+    from ..data.feature_engineering import make_features
+
+    try:
+        cov = (rets.cov().values * 252).astype(np.float32)
+        if is_em:
+            cov += np.eye(cov.shape[0]) * 0.01
+        feat = make_features(rets, model.feature_dim, is_em, volume=volume).astype(np.float32)
+
+        text_emb = None
+        if text_features is not None and model.use_text:
+            if "finbert" in text_features and text_features["finbert"] is not None:
+                if rebalance_idx < len(text_features["finbert"]):
+                    text_emb = text_features["finbert"][rebalance_idx].mean(axis=0)
+                    text_emb = torch.from_numpy(text_emb.astype(np.float32))
+
+        macro_feat = None
+        if macro_features is not None and model.use_macro and rebalance_date is not None:
+            from ..data.fred_loader import get_macro_vector
+            macro_feat = get_macro_vector(macro_features, rebalance_date)
+            macro_feat = torch.from_numpy(macro_feat)
+
+        with torch.no_grad():
+            w = model(
+                torch.from_numpy(np.nan_to_num(feat)),
+                torch.from_numpy(np.nan_to_num(cov)),
+                text_emb=text_emb,
+                macro_feat=macro_feat,
+            ).cpu().numpy()
+
+        w = np.nan_to_num(np.clip(w, 0, 1))
+        return w / w.sum() if w.sum() > 0 else np.ones(len(w)) / len(w)
+    except Exception:
+        return np.ones(rets.shape[1]) / rets.shape[1]
