@@ -233,13 +233,12 @@ def load_financial_phrasebank(split="sentences_allagree"):
     """
     try:
         from datasets import load_dataset
-        ds = load_dataset("financial_phrasebank", split, trust_remote_code=True)
+        ds = load_dataset("financial_phrasebank", split)
         df = pd.DataFrame(ds["train"])
         df.columns = ["sentence", "label"]
-        # Labels: 0=negative, 1=neutral, 2=positive
         return df
-    except ImportError:
-        print("Install datasets: pip install datasets")
+    except Exception as e:
+        print(f"Financial PhraseBank unavailable: {e}")
         return pd.DataFrame(columns=["sentence", "label"])
 
 
@@ -251,7 +250,7 @@ def load_fiqa_sentiment():
     """
     try:
         from datasets import load_dataset
-        ds = load_dataset("pauri32/fiqa-2018", trust_remote_code=True)
+        ds = load_dataset("pauri32/fiqa-2018")
         records = []
         for split_name in ["train", "validation", "test"]:
             if split_name in ds:
