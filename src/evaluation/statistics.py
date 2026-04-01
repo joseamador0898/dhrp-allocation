@@ -1,3 +1,5 @@
+import time
+
 import numpy as np
 import pandas as pd
 from scipy.stats import norm, ttest_rel
@@ -12,8 +14,12 @@ def compute_sharpe(r, rf=0.03):
     return (exc.mean() * 252) / (exc.std() * np.sqrt(252)) if exc.std() > 0 else 0
 
 
-def compute_stats(results, rf=0.03, n_boot=1000):
-    """Compute Sharpe ratio, HAC t-stat, and BCa bootstrap CI for each method."""
+def compute_stats(results, rf=0.03, n_boot=1000, gamma=2.5):
+    """Compute comprehensive performance metrics for each method.
+
+    Returns DataFrame with columns: Method, Sharpe, Sortino, Calmar, MaxDD,
+    CVaR_5, VaR_5, Omega, CER, Ann_Return, Ann_Vol, HAC_t, CI_lo, CI_hi.
+    """
     stats = []
     for m in sorted(results["method"].unique()):
         r = results[results["method"] == m]["return"].dropna().values
@@ -21,7 +27,9 @@ def compute_stats(results, rf=0.03, n_boot=1000):
             continue
         exc = r - rf / 252
         vol = exc.std()
-        sharpe = (exc.mean() * 252) / (vol * np.sqrt(252)) if vol > 0 else np.nan
+        ann_ret = exc.mean() * 252
+        ann_vol = vol * np.sqrt(252) if vol > 0 else np.nan
+        sharpe = ann_ret / ann_vol if ann_vol and ann_vol > 0 else np.nan
 
         # HAC t-stat
         try:
@@ -33,7 +41,7 @@ def compute_stats(results, rf=0.03, n_boot=1000):
         except Exception:
             hac_t = np.nan
 
-        # BCa (bias-corrected accelerated) bootstrap CI
+        # BCa bootstrap CI
         ci_lo, ci_hi = _bca_bootstrap_ci(r, rf=rf, n_boot=n_boot)
 
         # Max drawdown
@@ -42,12 +50,37 @@ def compute_stats(results, rf=0.03, n_boot=1000):
         mdd = ((cum - peak) / peak).min()
 
         # Calmar ratio
-        calmar = (sharpe * vol * np.sqrt(252)) / abs(mdd) if abs(mdd) > 1e-8 else np.nan
+        calmar = ann_ret / abs(mdd) if abs(mdd) > 1e-8 else np.nan
+
+        # Sortino ratio (downside deviation)
+        downside = exc[exc < 0]
+        downside_std = downside.std() * np.sqrt(252) if len(downside) > 1 else np.nan
+        sortino = ann_ret / downside_std if downside_std and downside_std > 0 else np.nan
+
+        # VaR and CVaR at 5%
+        var_5 = float(np.percentile(r, 5))
+        cvar_5 = float(r[r <= var_5].mean()) if np.any(r <= var_5) else var_5
+
+        # Omega ratio (threshold = 0)
+        gains = r[r > 0].sum()
+        losses = abs(r[r <= 0].sum())
+        omega = gains / losses if losses > 1e-12 else np.nan
+
+        # Certainty Equivalent Return (CER) under CRRA utility
+        try:
+            u_vals = ((1 + np.clip(r, -0.99, None)) ** (1 - gamma)) / (1 - gamma)
+            eu = u_vals.mean()
+            cer = (eu * (1 - gamma)) ** (1 / (1 - gamma)) - 1
+            cer_ann = cer * 252
+        except Exception:
+            cer_ann = np.nan
 
         stats.append({
-            "Method": m, "Sharpe": sharpe, "HAC_t": hac_t,
-            "CI_lo": ci_lo, "CI_hi": ci_hi,
-            "MaxDD": mdd, "Calmar": calmar,
+            "Method": m, "Sharpe": sharpe, "Sortino": sortino,
+            "Calmar": calmar, "MaxDD": mdd,
+            "CVaR_5": cvar_5, "VaR_5": var_5, "Omega": omega,
+            "CER": cer_ann, "Ann_Return": ann_ret, "Ann_Vol": ann_vol,
+            "HAC_t": hac_t, "CI_lo": ci_lo, "CI_hi": ci_hi,
         })
     return pd.DataFrame(stats)
 
@@ -152,21 +185,35 @@ def sharpe_difference_test(results, method_a="DHRP", method_b="HRP", n_boot=1000
 
 
 def fdr_correct(p_values, method="bh"):
-    """Benjamini-Hochberg FDR correction for multiple testing.
+    """Multiple testing correction.
 
     Args:
         p_values: list or array of raw p-values
-        method: "bh" for Benjamini-Hochberg, "bonferroni" for Bonferroni
+        method: "bh" for Benjamini-Hochberg, "bonferroni", or "holm" for Holm-Bonferroni
     Returns:
         dict with 'raw', 'adjusted', and 'significant' arrays
     """
-    p = np.array(p_values)
+    p = np.array(p_values, dtype=float)
     n = len(p)
     if n == 0:
-        return {"raw": p, "adjusted": p, "significant": np.array([], dtype=bool)}
+        return {"raw": p, "adjusted": p, "significant_005": np.array([], dtype=bool),
+                "significant_010": np.array([], dtype=bool)}
 
     if method == "bonferroni":
         adjusted = np.minimum(p * n, 1.0)
+    elif method == "holm":
+        # Holm-Bonferroni: step-down procedure controlling FWER
+        sorted_idx = np.argsort(p)
+        adjusted = np.zeros(n)
+        for i, idx in enumerate(sorted_idx):
+            adjusted[idx] = p[idx] * (n - i)
+        # Enforce monotonicity (step-down)
+        running_max = 0.0
+        for i in range(n):
+            idx = sorted_idx[i]
+            adjusted[idx] = max(adjusted[idx], running_max)
+            running_max = adjusted[idx]
+        adjusted = np.minimum(adjusted, 1.0)
     else:  # Benjamini-Hochberg
         sorted_idx = np.argsort(p)
         sorted_p = p[sorted_idx]
@@ -219,15 +266,97 @@ def diebold_mariano_test(results, method_a="DHRP", method_b="HRP", loss_fn="squa
     return {"DM_stat": DM, "p_value": p_value, "loss_fn": loss_fn}
 
 
-def subperiod_analysis(results, rf=0.03):
-    """Compute Sharpe ratios per sub-period (pre-COVID, COVID, post-COVID).
+# ---------------------------------------------------------------------------
+# Pairwise statistical tests with multiple testing correction
+# ---------------------------------------------------------------------------
 
-    Returns DataFrame with columns [Method, period, Sharpe, n_obs].
+def pairwise_sharpe_tests(results, ref="DHRP", n_boot=1000, rf=0.03, correction="holm"):
+    """Run pairwise Sharpe difference tests between ref and all other methods.
+
+    Returns DataFrame with raw and Holm-Bonferroni adjusted p-values.
+    """
+    methods = sorted(results["method"].unique())
+    if ref not in methods:
+        return pd.DataFrame()
+    others = [m for m in methods if m != ref]
+    rows = []
+    raw_ps = []
+    for other in others:
+        try:
+            res = sharpe_difference_test(results, method_a=ref, method_b=other,
+                                         n_boot=n_boot, rf=rf)
+            rows.append(res)
+            raw_ps.append(res["bootstrap_p"])
+        except Exception:
+            continue
+
+    if not rows:
+        return pd.DataFrame()
+
+    corrected = fdr_correct(raw_ps, method=correction)
+    df = pd.DataFrame(rows)
+    df["adjusted_p"] = corrected["adjusted"]
+    df["significant_005"] = corrected["significant_005"]
+    df["significant_010"] = corrected["significant_010"]
+    return df
+
+
+def pairwise_dm_tests(results, ref="DHRP", loss_fn="squared", correction="holm"):
+    """Run pairwise Diebold-Mariano tests between ref and all other methods.
+
+    Returns DataFrame with raw and corrected p-values.
+    """
+    methods = sorted(results["method"].unique())
+    if ref not in methods:
+        return pd.DataFrame()
+    others = [m for m in methods if m != ref]
+    rows = []
+    raw_ps = []
+    for other in others:
+        try:
+            res = diebold_mariano_test(results, method_a=ref, method_b=other,
+                                       loss_fn=loss_fn)
+            res["method_a"] = ref
+            res["method_b"] = other
+            rows.append(res)
+            raw_ps.append(res["p_value"])
+        except Exception:
+            continue
+
+    if not rows:
+        return pd.DataFrame()
+
+    corrected = fdr_correct(raw_ps, method=correction)
+    df = pd.DataFrame(rows)
+    df["adjusted_p"] = corrected["adjusted"]
+    df["significant_005"] = corrected["significant_005"]
+    return df
+
+
+def full_statistical_battery(results, ref="DHRP", rf=0.03, n_boot=1000):
+    """Run comprehensive statistical tests. Returns dict of DataFrames."""
+    return {
+        "sharpe_tests": pairwise_sharpe_tests(results, ref=ref, n_boot=n_boot, rf=rf),
+        "dm_tests_squared": pairwise_dm_tests(results, ref=ref, loss_fn="squared"),
+        "dm_tests_negative": pairwise_dm_tests(results, ref=ref, loss_fn="negative"),
+    }
+
+
+# ---------------------------------------------------------------------------
+# Regime / sub-period analysis
+# ---------------------------------------------------------------------------
+
+def subperiod_analysis(results, rf=0.03, gamma=2.5):
+    """Compute comprehensive metrics per macro regime.
+
+    Returns DataFrame with columns [Method, Period, Sharpe, Sortino, MaxDD, CVaR_5, N].
     """
     periods = {
-        "Pre-COVID (2016-2019)": ("2016-01-01", "2019-12-31"),
-        "COVID (2020-2021)": ("2020-01-01", "2021-12-31"),
-        "Post-COVID (2022+)": ("2022-01-01", "2099-12-31"),
+        "Pre-COVID Bull (2016-2019)": ("2016-01-01", "2019-12-31"),
+        "COVID Crash (2020-H1)": ("2020-01-01", "2020-06-30"),
+        "Recovery (2020-H2 to 2021)": ("2020-07-01", "2021-12-31"),
+        "Rate Hikes (2022 to 2023-H1)": ("2022-01-01", "2023-06-30"),
+        "Post-Hike (2023-H2+)": ("2023-07-01", "2099-12-31"),
     }
     rows = []
     for m in sorted(results["method"].unique()):
@@ -235,7 +364,180 @@ def subperiod_analysis(results, rf=0.03):
         ser.index = pd.to_datetime(ser.index)
         for pname, (pstart, pend) in periods.items():
             sub = ser[(ser.index >= pstart) & (ser.index <= pend)]
-            if len(sub) >= 30:
-                sharpe = compute_sharpe(sub.values, rf)
-                rows.append({"Method": m, "Period": pname, "Sharpe": sharpe, "N": len(sub)})
+            if len(sub) >= 20:
+                r = sub.values
+                exc = r - rf / 252
+                vol = exc.std()
+                ann_ret = exc.mean() * 252
+                ann_vol = vol * np.sqrt(252) if vol > 0 else np.nan
+                sharpe = ann_ret / ann_vol if ann_vol and ann_vol > 0 else np.nan
+
+                # Sortino
+                down = exc[exc < 0]
+                down_std = down.std() * np.sqrt(252) if len(down) > 1 else np.nan
+                sortino = ann_ret / down_std if down_std and down_std > 0 else np.nan
+
+                # MaxDD
+                cum = (1 + pd.Series(r)).cumprod()
+                mdd = ((cum - cum.cummax()) / cum.cummax()).min()
+
+                # CVaR
+                var5 = np.percentile(r, 5)
+                cvar5 = float(r[r <= var5].mean()) if np.any(r <= var5) else var5
+
+                rows.append({
+                    "Method": m, "Period": pname, "Sharpe": sharpe,
+                    "Sortino": sortino, "MaxDD": mdd, "CVaR_5": cvar5,
+                    "N": len(sub),
+                })
+    return pd.DataFrame(rows)
+
+
+# ---------------------------------------------------------------------------
+# Transaction cost sensitivity
+# ---------------------------------------------------------------------------
+
+def compute_turnover(weights_history):
+    """Compute average turnover from weight history.
+
+    Args:
+        weights_history: list of dicts with keys [method, date, weights]
+    Returns:
+        DataFrame with [Method, Avg_Turnover, Total_Turnover, N_Rebalances]
+    """
+    if not weights_history:
+        return pd.DataFrame()
+    df = pd.DataFrame(weights_history)
+    rows = []
+    for m in sorted(df["method"].unique()):
+        mw = df[df["method"] == m].sort_values("date")
+        w_arr = np.array(mw["weights"].tolist())
+        if len(w_arr) < 2:
+            continue
+        turnovers = np.sum(np.abs(np.diff(w_arr, axis=0)), axis=1)
+        rows.append({
+            "Method": m,
+            "Avg_Turnover": turnovers.mean(),
+            "Total_Turnover": turnovers.sum(),
+            "N_Rebalances": len(turnovers),
+        })
+    return pd.DataFrame(rows)
+
+
+def cost_sensitivity_analysis(results, weights_history, cost_levels=None, rf=0.03):
+    """Compute net-of-cost Sharpe at various transaction cost levels.
+
+    Args:
+        results: backtest results DataFrame
+        weights_history: list of dicts with [method, date, weights]
+        cost_levels: list of costs in bps (default [0, 5, 10, 20, 50])
+    Returns:
+        DataFrame with columns [Method, cost_0bps, cost_5bps, ...]
+    """
+    if cost_levels is None:
+        cost_levels = [0, 5, 10, 20, 50]
+    if not weights_history:
+        return pd.DataFrame()
+
+    wh_df = pd.DataFrame(weights_history)
+    methods = sorted(results["method"].unique())
+    rows = []
+
+    for m in methods:
+        r = results[results["method"] == m].sort_values("date")
+        mw = wh_df[wh_df["method"] == m].sort_values("date")
+        if mw.empty or r.empty:
+            continue
+
+        base_returns = r["return"].values.copy()
+        w_arr = np.array(mw["weights"].tolist())
+
+        # Compute turnover per rebalance
+        turnovers = np.zeros(len(w_arr))
+        if len(w_arr) > 1:
+            turnovers[1:] = np.sum(np.abs(np.diff(w_arr, axis=0)), axis=1)
+
+        # Map rebalance turnovers to daily returns
+        rebal_dates = mw["date"].values
+        daily_dates = r["date"].values
+
+        row = {"Method": m}
+        for cost_bps in cost_levels:
+            adj_returns = base_returns.copy()
+            # Spread turnover cost across holding period days
+            for i, rd in enumerate(rebal_dates):
+                mask = daily_dates == rd
+                if mask.any():
+                    tc = turnovers[i] * cost_bps / 10000
+                    idx = np.where(mask)[0][0]
+                    adj_returns[idx] -= tc
+            exc = adj_returns - rf / 252
+            vol = exc.std()
+            s = (exc.mean() * 252) / (vol * np.sqrt(252)) if vol > 0 else np.nan
+            row[f"cost_{cost_bps}bps"] = s
+        rows.append(row)
+
+    return pd.DataFrame(rows)
+
+
+def breakeven_cost(results, weights_history, method_a="DHRP", method_b="HRP",
+                   rf=0.03, max_bps=200):
+    """Find the transaction cost level at which method_a's Sharpe equals method_b's."""
+    for bps in range(0, max_bps + 1):
+        df = cost_sensitivity_analysis(results, weights_history,
+                                       cost_levels=[bps], rf=rf)
+        if df.empty:
+            return np.nan
+        sa = df[df["Method"] == method_a][f"cost_{bps}bps"]
+        sb = df[df["Method"] == method_b][f"cost_{bps}bps"]
+        if sa.empty or sb.empty:
+            return np.nan
+        if sa.values[0] <= sb.values[0]:
+            return bps
+    return max_bps
+
+
+# ---------------------------------------------------------------------------
+# Computational benchmarks
+# ---------------------------------------------------------------------------
+
+def benchmark_efficiency(models_dict, n_assets=5, feature_dim=48, n_runs=100):
+    """Benchmark inference time and parameter count for each model.
+
+    Args:
+        models_dict: dict mapping method name to (model, is_torch) tuple
+        n_assets: number of assets for synthetic input
+        feature_dim: feature dimension for synthetic input
+        n_runs: number of forward passes to time
+    Returns:
+        DataFrame with [Method, Params, Inference_ms]
+    """
+    import torch
+
+    rows = []
+    x_t = torch.randn(feature_dim)
+    S_t = torch.eye(n_assets) * 0.04
+
+    for name, (model, is_torch) in models_dict.items():
+        if is_torch:
+            n_params = sum(p.numel() for p in model.parameters())
+            model.eval()
+            # Warmup
+            with torch.no_grad():
+                for _ in range(5):
+                    model(x_t, S_t)
+            # Timed runs
+            t0 = time.perf_counter()
+            with torch.no_grad():
+                for _ in range(n_runs):
+                    model(x_t, S_t)
+            elapsed = (time.perf_counter() - t0) / n_runs * 1000  # ms
+        else:
+            n_params = 0
+            t0 = time.perf_counter()
+            for _ in range(n_runs):
+                model(np.zeros(n_assets), np.eye(n_assets) * 0.04)
+            elapsed = (time.perf_counter() - t0) / n_runs * 1000
+
+        rows.append({"Method": name, "Params": n_params, "Inference_ms": elapsed})
     return pd.DataFrame(rows)

@@ -4,7 +4,7 @@ Supports:
 - Classical baselines: EW, MINVAR, MV, HRP, RP, MAXDIV
 - DHRP (differentiable HRP)
 - LLM-DHRP (LLM-enhanced differentiable HRP)
-- Deep baselines: TransformerPolicy, PPO
+- Deep baselines: MLP, Transformer, PPO
 """
 
 import numpy as np
@@ -22,7 +22,10 @@ TEST_DAYS = 21
 STEP_DAYS = 21
 MIN_COVERAGE = 0.95
 PURGE_DAYS = 5  # gap between train and test to prevent look-ahead
-METHODS = ["EW", "MINVAR", "MV", "HRP", "RP", "MAXDIV", "DHRP"]
+METHODS = [
+    "EW", "MINVAR", "MV", "HRP", "RP", "MAXDIV",
+    "DHRP", "LLM_DHRP", "MLP", "Transformer", "PPO",
+]
 
 
 def rolling_backtest(
@@ -30,6 +33,9 @@ def rolling_backtest(
     is_em=False,
     dhrp_model=None,
     llm_dhrp_model=None,
+    mlp_model=None,
+    transformer_model=None,
+    ppo_model=None,
     text_features=None,
     macro_features=None,
     methods=None,
@@ -40,6 +46,7 @@ def rolling_backtest(
     transaction_cost_bps=0,
     volume=None,
     purge_days=PURGE_DAYS,
+    return_weights=False,
 ):
     """Run rolling-window backtest over all methods.
 
@@ -48,6 +55,9 @@ def rolling_backtest(
         is_em: whether this is an emerging markets universe
         dhrp_model: trained DHRPLayer, or None
         llm_dhrp_model: trained LLMDHRPLayer, or None
+        mlp_model: trained MLPWithCovPolicy, or None
+        transformer_model: trained TransformerPortfolioPolicy, or None
+        ppo_model: trained PPOPortfolioAgent, or None
         text_features: dict with 'finbert' and/or 'sentiment' arrays, or None
         macro_features: DataFrame of macro features, or None
         methods: list of method names to backtest
@@ -58,13 +68,29 @@ def rolling_backtest(
         transaction_cost_bps: transaction costs in basis points
         volume: DataFrame of daily volume, or None
         purge_days: gap between train and test windows
+        return_weights: if True, also return weight history for turnover analysis
     Returns:
         DataFrame with columns [method, date, return]
+        If return_weights=True, returns (results_df, weights_history)
+        where weights_history is a list of dicts with [method, date, weights]
     """
     if methods is None:
-        methods = METHODS
+        # Only include methods that have models provided
+        methods = ["EW", "MINVAR", "MV", "HRP", "RP", "MAXDIV"]
+        if dhrp_model is not None:
+            methods.append("DHRP")
+        if llm_dhrp_model is not None:
+            methods.append("LLM_DHRP")
+        if mlp_model is not None:
+            methods.append("MLP")
+        if transformer_model is not None:
+            methods.append("Transformer")
+        if ppo_model is not None:
+            methods.append("PPO")
+
     rets = prices.pct_change().dropna()
     results = []
+    weights_history = []
     prev_weights = {}
     rebalance_idx = 0
 
@@ -96,6 +122,9 @@ def rolling_backtest(
                     m, mu, cov, train, is_em,
                     dhrp_model=dhrp_model,
                     llm_dhrp_model=llm_dhrp_model,
+                    mlp_model=mlp_model,
+                    transformer_model=transformer_model,
+                    ppo_model=ppo_model,
                     text_features=text_features,
                     macro_features=macro_features,
                     rebalance_idx=rebalance_idx,
@@ -104,6 +133,14 @@ def rolling_backtest(
                 )
                 if w is None:
                     continue
+
+                # Record weights for turnover analysis
+                if return_weights:
+                    weights_history.append({
+                        "method": m,
+                        "date": rets.index[t],
+                        "weights": w.tolist(),
+                    })
 
                 # Transaction cost adjustment
                 tc_drag = 0.0
@@ -120,12 +157,59 @@ def rolling_backtest(
 
         rebalance_idx += 1
 
-    return pd.DataFrame(results)
+    results_df = pd.DataFrame(results)
+    if return_weights:
+        return results_df, weights_history
+    return results_df
+
+
+def multiseed_backtest(prices, models_by_seed, is_em=False, methods=None,
+                       rf=0.03, **kwargs):
+    """Run backtests across multiple seeds and aggregate results.
+
+    Args:
+        prices: DataFrame of adjusted close prices
+        models_by_seed: list of dicts, each mapping model_type to trained model
+                        e.g. [{"dhrp": model_s0, "mlp": model_s0}, ...]
+        is_em: emerging markets flag
+        methods: list of method names
+        rf: risk-free rate
+        **kwargs: additional args passed to rolling_backtest
+    Returns:
+        DataFrame with columns [Method, Sharpe_mean, Sharpe_std, Sortino_mean, ...]
+    """
+    from .statistics import compute_stats
+
+    all_stats = []
+    for seed_models in models_by_seed:
+        res = rolling_backtest(
+            prices, is_em=is_em,
+            dhrp_model=seed_models.get("dhrp"),
+            llm_dhrp_model=seed_models.get("llm_dhrp"),
+            mlp_model=seed_models.get("mlp"),
+            transformer_model=seed_models.get("transformer"),
+            ppo_model=seed_models.get("ppo"),
+            methods=methods,
+            **kwargs,
+        )
+        stats = compute_stats(res, rf=rf)
+        all_stats.append(stats)
+
+    if not all_stats:
+        return pd.DataFrame()
+
+    # Aggregate across seeds
+    combined = pd.concat(all_stats, ignore_index=True)
+    metric_cols = [c for c in combined.columns if c != "Method"]
+    agg = combined.groupby("Method")[metric_cols].agg(["mean", "std"])
+    agg.columns = [f"{c}_{s}" for c, s in agg.columns]
+    return agg.reset_index()
 
 
 def _compute_weights(
     method, mu, cov, train_rets, is_em,
     dhrp_model=None, llm_dhrp_model=None,
+    mlp_model=None, transformer_model=None, ppo_model=None,
     text_features=None, macro_features=None,
     rebalance_idx=0, rebalance_date=None,
     volume=None,
@@ -152,6 +236,12 @@ def _compute_weights(
             rebalance_idx, rebalance_date,
             volume=volume,
         )
+    elif method == "MLP" and mlp_model is not None:
+        return dhrp_weights(mlp_model, train_rets, is_em, volume=volume)
+    elif method == "Transformer" and transformer_model is not None:
+        return dhrp_weights(transformer_model, train_rets, is_em, volume=volume)
+    elif method == "PPO" and ppo_model is not None:
+        return dhrp_weights(ppo_model, train_rets, is_em, volume=volume)
     return None
 
 

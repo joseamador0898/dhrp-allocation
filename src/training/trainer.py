@@ -10,8 +10,17 @@ from ..models.loss_functions import dhrp_loss
 from ..data.feature_engineering import build_dataset, make_features, DEFAULT_FDIM
 
 
-def train_dhrp(prices, device="cpu", is_em=False, volume=None, fdim=DEFAULT_FDIM):
+def _set_seed(seed):
+    """Set random seeds for reproducibility."""
+    np.random.seed(seed)
+    torch.manual_seed(seed)
+    if torch.cuda.is_available():
+        torch.cuda.manual_seed_all(seed)
+
+
+def train_dhrp(prices, device="cpu", is_em=False, volume=None, fdim=DEFAULT_FDIM, seed=42):
     """Train DHRP model on historical price data."""
+    _set_seed(seed)
     X, S, R, H = build_dataset(prices, is_em=is_em, volume=volume, fdim=fdim)
     if X.ndim == 1 or X.shape[0] < 50:
         raise ValueError(f"Insufficient data: {X.shape[0] if X.ndim > 1 else 0}")
@@ -67,6 +76,23 @@ def train_dhrp(prices, device="cpu", is_em=False, volume=None, fdim=DEFAULT_FDIM
     return model
 
 
+def train_dhrp_multiseed(prices, seeds=None, device="cpu", is_em=False,
+                         volume=None, fdim=DEFAULT_FDIM):
+    """Train DHRP models across multiple seeds for robustness analysis.
+
+    Returns list of trained models (one per seed).
+    """
+    if seeds is None:
+        seeds = [0, 1, 2, 3, 4]
+    models = []
+    for s in seeds:
+        print(f"\n--- Seed {s} ---")
+        m = train_dhrp(prices, device=device, is_em=is_em, volume=volume,
+                       fdim=fdim, seed=s)
+        models.append(m)
+    return models
+
+
 def train_llm_dhrp(
     prices,
     text_features=None,
@@ -90,6 +116,7 @@ def train_llm_dhrp(
     use_hrp_reg=True,
     volume=None,
     fdim=DEFAULT_FDIM,
+    seed=42,
 ):
     """Train LLM-enhanced DHRP model.
 
@@ -109,9 +136,11 @@ def train_llm_dhrp(
         use_hrp_reg: whether to use HRP regularization
         volume: DataFrame of daily volume, or None
         fdim: feature dimension
+        seed: random seed for reproducibility
     Returns:
         trained LLMDHRPLayer model
     """
+    _set_seed(seed)
     X, S, R, H = build_dataset(prices, is_em=is_em, volume=volume, fdim=fdim)
     if X.ndim == 1 or X.shape[0] < 50:
         raise ValueError(f"Insufficient data: {X.shape[0] if X.ndim > 1 else 0}")
@@ -199,6 +228,18 @@ def train_llm_dhrp(
     if best_st:
         model.load_state_dict({k: v.to(device) for k, v in best_st.items()})
     return model
+
+
+def train_llm_dhrp_multiseed(prices, seeds=None, **kwargs):
+    """Train LLM-DHRP models across multiple seeds for robustness analysis."""
+    if seeds is None:
+        seeds = [0, 1, 2, 3, 4]
+    models = []
+    for s in seeds:
+        print(f"\n--- Seed {s} ---")
+        m = train_llm_dhrp(prices, seed=s, **kwargs)
+        models.append(m)
+    return models
 
 
 def _llm_dhrp_loss(model, xb, Sb, rb, hrp_w, text_embs=None, macro_feats=None,
