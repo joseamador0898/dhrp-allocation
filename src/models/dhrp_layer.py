@@ -11,12 +11,25 @@ class DHRPLayer(nn.Module):
         super().__init__()
         self.n_assets = n_assets
         self.feature_dim = feature_dim
+        self.depth = depth
         self.is_em = is_em
         self.n_leaves = 2 ** depth
         self.n_internal = 2 ** depth - 1
         self.register_buffer(
             "asset_to_leaf", torch.arange(n_assets) % self.n_leaves
         )
+        # Precompute root-to-leaf paths for arbitrary depth
+        # Each path is a list of (node_index, child_direction) tuples
+        self._paths = []
+        for leaf in range(self.n_leaves):
+            path = []
+            node = 0
+            bits = leaf
+            for d in range(depth - 1, -1, -1):
+                direction = (bits >> d) & 1
+                path.append((node, direction))
+                node = 2 * node + 1 + direction
+            self._paths.append(path)
         cov_h = hidden_dim if is_em else hidden_dim * 2
         gate_h = hidden_dim // 2 if is_em else hidden_dim
         self.feat_norm = nn.LayerNorm(feature_dim)
@@ -41,21 +54,10 @@ class DHRPLayer(nn.Module):
         node_feat = self.feat_norm(x_t + self.cov_proj(Sigma_norm.reshape(-1)))
         temp = 3.0 if self.is_em else 1.5
         probs = [F.softmax(g(node_feat) / temp, dim=-1) for g in self.gates]
-        # Hard-coded paths for depth-3 binary tree (8 leaves)
-        paths = [
-            [(0, 0), (1, 0), (3, 0)],
-            [(0, 0), (1, 0), (3, 1)],
-            [(0, 0), (1, 1), (4, 0)],
-            [(0, 0), (1, 1), (4, 1)],
-            [(0, 1), (2, 0), (5, 0)],
-            [(0, 1), (2, 0), (5, 1)],
-            [(0, 1), (2, 1), (6, 0)],
-            [(0, 1), (2, 1), (6, 1)],
-        ]
         leaf_w = torch.stack(
             [
                 torch.prod(torch.stack([probs[n][d] for n, d in p]))
-                for p in paths
+                for p in self._paths
             ]
         )
         leaf_b = F.softmax(self.leaf_logits, dim=0) * leaf_w
