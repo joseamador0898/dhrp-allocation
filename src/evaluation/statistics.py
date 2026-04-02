@@ -515,11 +515,13 @@ def benchmark_efficiency(models_dict, n_assets=5, feature_dim=48, n_runs=100):
     import torch
 
     rows = []
-    x_t = torch.randn(feature_dim)
-    S_t = torch.eye(n_assets) * 0.04
 
     for name, (model, is_torch) in models_dict.items():
         if is_torch:
+            # Place synthetic inputs on same device as model
+            dev = next(model.parameters()).device
+            x_t = torch.randn(feature_dim, device=dev)
+            S_t = torch.eye(n_assets, device=dev) * 0.04
             n_params = sum(p.numel() for p in model.parameters())
             model.eval()
             # Warmup
