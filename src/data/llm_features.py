@@ -137,10 +137,10 @@ def _select_qwen_model():
         return None
     props = torch.cuda.get_device_properties(0)
     vram_gb = getattr(props, "total_memory", getattr(props, "total_mem", 0)) / 1e9
-    if vram_gb >= 40:
-        return "Qwen/Qwen3-32B"   # A100/H100: best reasoning + JSON output
+    if vram_gb >= 70:
+        return "Qwen/Qwen3-32B"   # A100 80GB / H100: best reasoning + JSON
     elif vram_gb >= 12:
-        return "Qwen/Qwen3-8B"    # T4/V100: good baseline
+        return "Qwen/Qwen3-8B"    # A100 40GB / T4 / V100
     return None
 
 
@@ -171,6 +171,11 @@ def get_qwen3_sentiment(headlines_batch, device="cuda", max_new_tokens=256,
                  "confidence": 0.0}] * len(headlines_batch)
 
     print(f"  Loading {model_name} (4-bit)...")
+
+    # Free VRAM from any prior models (e.g. FinBERT) before loading
+    import gc
+    gc.collect()
+    torch.cuda.empty_cache()
 
     bnb_config = BitsAndBytesConfig(
         load_in_4bit=True,
