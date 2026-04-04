@@ -110,9 +110,11 @@ class LLMDHRPLayer(nn.Module):
         self.n_internal = 2 ** depth - 1
         self.fusion_type = fusion_type
 
-        self.register_buffer(
-            "asset_to_leaf", torch.arange(n_assets) % self.n_leaves
-        )
+        # Learnable soft leaf assignment (same fix as DHRPLayer)
+        init_logits = torch.full((n_assets, self.n_leaves), -2.0)
+        for i in range(n_assets):
+            init_logits[i, i % self.n_leaves] = 2.0
+        self.leaf_assign_logits = nn.Parameter(init_logits)
 
         # Text projection: map LLM embeddings to feature_dim
         if use_text:
@@ -161,9 +163,12 @@ class LLMDHRPLayer(nn.Module):
             for _ in range(self.n_internal)
         ])
         self.leaf_logits = nn.Parameter(torch.zeros(self.n_leaves))
-        self.vol_weight = nn.Parameter(torch.tensor(0.2 if is_em else 0.6))
 
-        # Pre-compute tree paths for depth-3 binary tree
+        # Higher init for tree influence; learnable temperature
+        self.vol_weight = nn.Parameter(torch.tensor(1.5 if not is_em else 0.5))
+        self.log_temp = nn.Parameter(torch.tensor(0.0 if not is_em else 0.7))
+
+        # Pre-compute tree paths
         self._paths = self._build_paths(depth)
 
     @staticmethod
@@ -220,8 +225,8 @@ class LLMDHRPLayer(nn.Module):
         Sigma_norm = Sigma_t / (Sigma_t.abs().max() + 1e-6)
         node_feat = self.feat_norm(fused_feat + self.cov_proj(Sigma_norm.reshape(-1)))
 
-        # Soft gating tree
-        temp = 3.0 if self.is_em else 1.5
+        # Soft gating tree with learnable temperature
+        temp = torch.clamp(self.log_temp.exp(), 0.1, 5.0)
         probs = [F.softmax(g(node_feat) / temp, dim=-1) for g in self.gates]
 
         leaf_w = torch.stack([
@@ -232,10 +237,10 @@ class LLMDHRPLayer(nn.Module):
         leaf_b = F.softmax(self.leaf_logits, dim=0) * leaf_w
         leaf_b = leaf_b / (leaf_b.sum() + 1e-8)
 
-        # Map leaves to assets
-        asset_b = torch.zeros(self.n_assets, device=x_t.device)
-        for i in range(self.n_assets):
-            asset_b[i] += leaf_b[int(self.asset_to_leaf[i].item())]
+        # Soft assignment: each asset attends to all leaves
+        assign = F.softmax(self.leaf_assign_logits, dim=-1)   # (n_assets, n_leaves)
+        asset_b = (assign * leaf_b.unsqueeze(0)).sum(dim=-1)   # (n_assets,)
+        asset_b = asset_b / (asset_b.sum() + 1e-8)
 
         # Inverse-volatility blending
         vols = torch.sqrt(torch.clamp(torch.diag(Sigma_t), min=1e-8))
@@ -258,7 +263,7 @@ class LLMDHRPLayer(nn.Module):
         fused_feat = self._fuse_features(x_t, text_emb, macro_feat)
         Sigma_norm = Sigma_t / (Sigma_t.abs().max() + 1e-6)
         node_feat = self.feat_norm(fused_feat + self.cov_proj(Sigma_norm.reshape(-1)))
-        temp = 3.0 if self.is_em else 1.5
+        temp = torch.clamp(self.log_temp.exp(), 0.1, 5.0)
         return [F.softmax(g(node_feat) / temp, dim=-1).detach() for g in self.gates]
 
     def get_routing_shift(self, x_t, Sigma_t, text_emb=None, macro_feat=None):

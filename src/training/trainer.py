@@ -28,9 +28,9 @@ def train_dhrp(prices, device="cpu", is_em=False, volume=None, fdim=DEFAULT_FDIM
     mkt = "EM" if is_em else "DM"
     print(f"  [{mkt}] {n_samp} samples, {n_assets} assets, fdim={fdim_actual}")
 
-    hid, wd, lr = (32, 1e-3, 1.5e-4) if is_em else (64, 3e-4, 4.5e-4)
-    epochs, clip = (50, 0.5) if is_em else (40, 1.0)
-    hrp_s, hrp_e = (0.6, 0.3) if is_em else (0.3, 0.1)
+    hid, wd, lr = (32, 1e-3, 1.5e-4) if is_em else (64, 3e-4, 6e-4)
+    epochs, clip = (50, 0.5) if is_em else (60, 1.0)
+    hrp_s, hrp_e = (0.3, 0.05) if is_em else (0.15, 0.02)
 
     model = DHRPLayer(n_assets, fdim_actual, hidden_dim=hid, is_em=is_em).to(device)
     opt = optim.AdamW(model.parameters(), lr=lr, weight_decay=wd)
@@ -254,21 +254,22 @@ def _llm_dhrp_loss(model, xb, Sb, rb, hrp_w, text_embs=None, macro_feats=None,
         port_r.append((w * rb[t]).sum())
     port_r = torch.stack(port_r)
     wts = torch.stack(wts)
-    port_r = torch.clamp(port_r, -0.5, 0.5)
 
     gamma = 1.2 if is_em else 2.5
     crra = (
         (torch.clamp(1 + port_r, min=0.1) ** (1 - gamma) - 1) / (1 - gamma)
     ).mean()
-    sharpe = port_r.mean() / (port_r.std() + 1e-6) * (0.09 if is_em else 0.18)
+    sharpe = port_r.mean() / (port_r.std() + 1e-6) * (0.5 if is_em else 1.0)
     hrp_target = torch.from_numpy(hrp_w).to(xb.device).float()
-    hrp_reg = ((wts - hrp_target) ** 2).mean() * lam_hrp * (1.5 if is_em else 0.8)
+    hrp_reg = ((wts - hrp_target) ** 2).mean() * lam_hrp * (0.5 if is_em else 0.2)
     risk = (
         torch.stack([wts[t] @ Sb[t] @ wts[t] for t in range(rb.shape[0])]).mean()
         * (0.004 if is_em else 0.001)
     )
     entropy = (-(wts * torch.log(wts + 1e-8)).sum(1).mean() * 0.15) if is_em else 0
-    loss = -(crra + sharpe + entropy) + hrp_reg + risk
+    hhi = (wts ** 2).sum(1).mean()
+    concentration_pen = hhi * (0.3 if is_em else 0.1)
+    loss = -(crra + sharpe + entropy) + hrp_reg + risk + concentration_pen
     if torch.isnan(loss):
         return torch.tensor(0.0, device=xb.device, requires_grad=True)
     return loss
@@ -277,16 +278,19 @@ def _llm_dhrp_loss(model, xb, Sb, rb, hrp_w, text_embs=None, macro_feats=None,
 def dhrp_weights(model, rets, is_em=False, volume=None):
     """Compute portfolio weights from a trained DHRP model."""
     try:
+        device = next(model.parameters()).device
         cov = (rets.cov().values * 252).astype(np.float32)
         if is_em:
             cov += np.eye(cov.shape[0]) * 0.01
         feat = make_features(rets, model.feature_dim, is_em, volume=volume).astype(np.float32)
         with torch.no_grad():
             w = model(
-                torch.from_numpy(np.nan_to_num(feat)),
-                torch.from_numpy(np.nan_to_num(cov)),
+                torch.from_numpy(np.nan_to_num(feat)).to(device),
+                torch.from_numpy(np.nan_to_num(cov)).to(device),
             ).cpu().numpy()
         w = np.nan_to_num(np.clip(w, 0, 1))
         return w / w.sum() if w.sum() > 0 else np.ones(len(w)) / len(w)
-    except Exception:
+    except Exception as e:
+        import warnings
+        warnings.warn(f"dhrp_weights failed for {type(model).__name__}: {e}")
         return np.ones(rets.shape[1]) / rets.shape[1]

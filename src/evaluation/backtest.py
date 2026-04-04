@@ -256,6 +256,7 @@ def _llm_dhrp_weights(
     from ..data.feature_engineering import make_features
 
     try:
+        device = next(model.parameters()).device
         cov = (rets.cov().values * 252).astype(np.float32)
         if is_em:
             cov += np.eye(cov.shape[0]) * 0.01
@@ -266,23 +267,25 @@ def _llm_dhrp_weights(
             if "finbert" in text_features and text_features["finbert"] is not None:
                 if rebalance_idx < len(text_features["finbert"]):
                     text_emb = text_features["finbert"][rebalance_idx].mean(axis=0)
-                    text_emb = torch.from_numpy(text_emb.astype(np.float32))
+                    text_emb = torch.from_numpy(text_emb.astype(np.float32)).to(device)
 
         macro_feat = None
         if macro_features is not None and model.use_macro and rebalance_date is not None:
             from ..data.fred_loader import get_macro_vector
             macro_feat = get_macro_vector(macro_features, rebalance_date)
-            macro_feat = torch.from_numpy(macro_feat)
+            macro_feat = torch.from_numpy(macro_feat).to(device)
 
         with torch.no_grad():
             w = model(
-                torch.from_numpy(np.nan_to_num(feat)),
-                torch.from_numpy(np.nan_to_num(cov)),
+                torch.from_numpy(np.nan_to_num(feat)).to(device),
+                torch.from_numpy(np.nan_to_num(cov)).to(device),
                 text_emb=text_emb,
                 macro_feat=macro_feat,
             ).cpu().numpy()
 
         w = np.nan_to_num(np.clip(w, 0, 1))
         return w / w.sum() if w.sum() > 0 else np.ones(len(w)) / len(w)
-    except Exception:
+    except Exception as e:
+        import warnings
+        warnings.warn(f"_llm_dhrp_weights failed: {e}")
         return np.ones(rets.shape[1]) / rets.shape[1]

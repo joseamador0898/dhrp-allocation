@@ -11,20 +11,92 @@ import os
 import numpy as np
 
 
-def get_finbert_embeddings(headlines, batch_size=64, device="cuda"):
-    """Extract 768-dim FinBERT embeddings from financial headlines.
+def get_gemini_embeddings(headlines, model="text-embedding-004", batch_size=100):
+    """Extract embeddings via Google Gemini API.
 
-    Uses mean pooling over token representations for dense embeddings.
+    Uses GOOGLE_API_KEY from .env.  Returns shape (len(headlines), 768).
+    Falls back to zeros if the API is unavailable.
 
     Args:
         headlines: list of headline strings
-        batch_size: inference batch size (64 fits comfortably on T4)
+        model: Gemini embedding model name
+        batch_size: headlines per API call
+    Returns:
+        np.ndarray of shape (len(headlines), 768)
+    """
+    import os
+    import time
+
+    api_key = os.environ.get("GOOGLE_API_KEY")
+    if not api_key:
+        print("Warning: GOOGLE_API_KEY not set. Returning zero embeddings.")
+        return np.zeros((len(headlines), 768), dtype=np.float32)
+
+    try:
+        import google.generativeai as genai
+        genai.configure(api_key=api_key)
+    except ImportError:
+        print("Install google-generativeai: pip install google-generativeai")
+        return np.zeros((len(headlines), 768), dtype=np.float32)
+
+    embeddings = []
+    for i in range(0, len(headlines), batch_size):
+        batch = headlines[i : i + batch_size]
+        for attempt in range(3):
+            try:
+                result = genai.embed_content(
+                    model=f"models/{model}",
+                    content=batch,
+                    task_type="SEMANTIC_SIMILARITY",
+                )
+                emb = np.array(result["embedding"], dtype=np.float32)
+                # Gemini may return different dims; truncate/pad to 768
+                if emb.ndim == 1:
+                    emb = emb.reshape(1, -1)
+                if emb.shape[1] > 768:
+                    emb = emb[:, :768]
+                elif emb.shape[1] < 768:
+                    pad = np.zeros((emb.shape[0], 768 - emb.shape[1]), dtype=np.float32)
+                    emb = np.hstack([emb, pad])
+                embeddings.append(emb)
+                break
+            except Exception as e:
+                if "429" in str(e) or "quota" in str(e).lower():
+                    wait = 2 ** (attempt + 1)
+                    print(f"  Gemini rate limit, retrying in {wait}s...")
+                    time.sleep(wait)
+                else:
+                    print(f"  Gemini embedding error: {e}")
+                    embeddings.append(np.zeros((len(batch), 768), dtype=np.float32))
+                    break
+
+    if embeddings:
+        return np.vstack(embeddings)
+    return np.zeros((len(headlines), 768), dtype=np.float32)
+
+
+def get_finbert_embeddings(headlines, batch_size=None, device="cuda"):
+    """Extract 768-dim FinBERT embeddings from financial headlines.
+
+    Uses mean pooling over token representations for dense embeddings.
+    Batch size auto-scales: 256 on A100 (80GB), 64 on T4 (16GB).
+
+    Args:
+        headlines: list of headline strings
+        batch_size: inference batch size (None = auto by VRAM)
         device: "cuda" or "cpu"
     Returns:
         np.ndarray of shape (len(headlines), 768)
     """
     import torch
     from transformers import AutoTokenizer, AutoModel
+
+    if batch_size is None:
+        if device == "cuda" and torch.cuda.is_available():
+            vram_gb = torch.cuda.get_device_properties(0).total_mem / 1e9
+            batch_size = 256 if vram_gb >= 40 else 64
+        else:
+            batch_size = 32
 
     model_name = "ProsusAI/finbert"
     tokenizer = AutoTokenizer.from_pretrained(model_name)
@@ -52,67 +124,126 @@ def get_finbert_embeddings(headlines, batch_size=64, device="cuda"):
     return np.vstack(embeddings) if embeddings else np.empty((0, 768))
 
 
-def get_qwen3_sentiment(headlines_batch, device="cuda", max_new_tokens=200):
-    """Extract structured sentiment from headlines using Qwen3-8B (4-bit).
+def _select_qwen_model():
+    """Select best Qwen3 model for available VRAM.
 
-    Returns JSON with: sentiment (-1 to 1), risk_level, regime, key_factors.
+    A100 80GB  -> Qwen3-32B  (4-bit ~20GB, best structured reasoning)
+    T4/V100    -> Qwen3-8B   (4-bit ~5GB, good baseline)
+    CPU        -> None        (skip)
+    """
+    import torch
+    if not torch.cuda.is_available():
+        return None
+    vram_gb = torch.cuda.get_device_properties(0).total_mem / 1e9
+    if vram_gb >= 40:
+        return "Qwen/Qwen3-32B"   # A100/H100: best reasoning + JSON output
+    elif vram_gb >= 12:
+        return "Qwen/Qwen3-8B"    # T4/V100: good baseline
+    return None
+
+
+def get_qwen3_sentiment(headlines_batch, device="cuda", max_new_tokens=256,
+                        model_name=None):
+    """Extract structured sentiment using Qwen3-32B (A100) or Qwen3-8B (T4).
+
+    Auto-selects model based on GPU VRAM. Returns JSON with:
+    sentiment (-1 to 1), risk_level, regime, key_factors, confidence.
 
     Args:
-        headlines_batch: list of lists — each inner list is headlines for one prompt
+        headlines_batch: list of lists -- each inner list is headlines for one prompt
         device: "cuda" or "cpu"
         max_new_tokens: max generation length
+        model_name: override model (None = auto-select by VRAM)
     Returns:
         list of dicts with structured sentiment data
     """
     import torch
     from transformers import AutoTokenizer, AutoModelForCausalLM, BitsAndBytesConfig
 
+    if model_name is None:
+        model_name = _select_qwen_model()
+    if model_name is None:
+        print("  No GPU available for Qwen3. Returning neutral sentiment.")
+        return [{"sentiment": 0.0, "risk_level": "medium",
+                 "regime": "transitioning", "key_factors": [],
+                 "confidence": 0.0}] * len(headlines_batch)
+
+    print(f"  Loading {model_name} (4-bit)...")
+
     bnb_config = BitsAndBytesConfig(
         load_in_4bit=True,
-        bnb_4bit_compute_dtype=torch.float16,
+        bnb_4bit_compute_dtype=torch.bfloat16,
         bnb_4bit_quant_type="nf4",
         bnb_4bit_use_double_quant=True,
     )
     model = AutoModelForCausalLM.from_pretrained(
-        "Qwen/Qwen3-8B",
+        model_name,
         quantization_config=bnb_config,
         device_map="auto",
-        torch_dtype=torch.float16,
+        torch_dtype=torch.bfloat16,
     )
-    tokenizer = AutoTokenizer.from_pretrained("Qwen/Qwen3-8B")
+    tokenizer = AutoTokenizer.from_pretrained(model_name)
+
+    vram_used = torch.cuda.memory_allocated() / 1e9
+    print(f"  {model_name} loaded. VRAM: {vram_used:.1f} GB")
 
     PROMPT_TEMPLATE = (
-        "Analyze these financial headlines and return ONLY valid JSON "
-        "(no explanation):\n\nHeadlines:\n{headlines}\n\n"
-        'Return: {{"sentiment": float(-1 to 1), '
-        '"risk_level": "low"|"medium"|"high", '
-        '"regime": "risk_on"|"risk_off"|"transitioning", '
-        '"key_factors": [str]}}'
+        "You are an expert financial analyst. Analyze these financial headlines "
+        "and return ONLY valid JSON (no explanation, no markdown):\n\n"
+        "Headlines:\n{headlines}\n\n"
+        "Return exactly this JSON structure:\n"
+        '{{"sentiment": <float -1.0 to 1.0>, '
+        '"risk_level": "low" | "medium" | "high", '
+        '"regime": "risk_on" | "risk_off" | "transitioning", '
+        '"key_factors": [<up to 5 short strings>], '
+        '"confidence": <float 0.0 to 1.0>}}'
     )
 
     results = []
     for headlines in headlines_batch:
-        prompt = PROMPT_TEMPLATE.format(headlines="\n".join(headlines[:10]))
+        prompt = PROMPT_TEMPLATE.format(headlines="\n".join(headlines[:15]))
         inputs = tokenizer(prompt, return_tensors="pt").to(device)
         with torch.no_grad():
             output = model.generate(
                 **inputs, max_new_tokens=max_new_tokens,
                 temperature=0.1, do_sample=True,
             )
-        response = tokenizer.decode(output[0][inputs["input_ids"].shape[1]:], skip_special_tokens=True)
+        response = tokenizer.decode(
+            output[0][inputs["input_ids"].shape[1]:],
+            skip_special_tokens=True,
+        )
+
+        # Extract JSON from response (handle markdown code blocks)
+        text = response.strip()
+        if "```" in text:
+            text = text.split("```")[1]
+            if text.startswith("json"):
+                text = text[4:]
+            text = text.strip()
+        # Find first { and last }
+        start = text.find("{")
+        end = text.rfind("}")
+        if start != -1 and end != -1:
+            text = text[start:end + 1]
+
         try:
-            parsed = json.loads(response.strip())
+            parsed = json.loads(text)
+            # Validate expected fields
+            parsed.setdefault("sentiment", 0.0)
+            parsed.setdefault("risk_level", "medium")
+            parsed.setdefault("regime", "transitioning")
+            parsed.setdefault("key_factors", [])
+            parsed.setdefault("confidence", 0.5)
             results.append(parsed)
         except json.JSONDecodeError:
             results.append({
                 "sentiment": 0.0, "risk_level": "medium",
                 "regime": "transitioning", "key_factors": [],
+                "confidence": 0.0,
             })
 
     del model
-    if device == "cuda":
-        import torch
-        torch.cuda.empty_cache()
+    torch.cuda.empty_cache()
 
     return results
 
@@ -144,6 +275,9 @@ def sentiment_to_features(sentiment_data, feature_dim=16):
     # Number of key factors as complexity signal
     n_factors = len(sentiment_data.get("key_factors", []))
     feat[5] = min(n_factors / 5.0, 1.0)
+
+    # Confidence (from Qwen3-32B)
+    feat[6] = sentiment_data.get("confidence", 0.5)
 
     return feat
 

@@ -1,10 +1,8 @@
 """Goldman Sachs Quant (gs_quant) data integration.
 
-Pulls factor risk model data, FX forwards, and macro indicators from
-GS Marquee platform. Requires GS_CLIENT_ID and GS_CLIENT_SECRET in .env.
-
-Note: Access tier determines available datasets. If specific datasets are
-unavailable, this module gracefully returns empty DataFrames.
+Pulls daily close prices for macro indices (SPX, VIX, MXEF, BCOMTR, DXY, etc.)
+and FX spot rates from GS Marquee via the TREOD and FXSPOT_STANDARD datasets.
+Requires GS_CLIENT_ID and GS_CLIENT_SECRET in .env.
 """
 
 import os
@@ -14,6 +12,25 @@ import pandas as pd
 
 
 CACHE_DIR = os.path.join(os.path.dirname(__file__), "..", "..", "data", "cache")
+
+# Index tickers to resolve via SecurityMaster (TREOD dataset)
+GS_INDEX_TICKERS = {
+    "spx": "SPX",          # S&P 500
+    "vix": "VIX",          # CBOE VIX
+    "ndx": "NDX",          # Nasdaq 100
+    "rty": "RTY",          # Russell 2000
+    "mxef": "MXEF",        # MSCI Emerging Markets
+    "mxwo": "MXWO",        # MSCI World
+    "mxea": "MXEA",        # MSCI EAFE
+    "bcomtr": "BCOMTR",    # Bloomberg Commodity TR
+    "dxy": "DXY",          # Dollar Index
+}
+
+# FX pairs to resolve via Bloomberg ID (FXSPOT_STANDARD dataset)
+GS_FX_PAIRS = {
+    "eurusd": "EURUSD",
+    "usdjpy": "USDJPY",
+}
 
 
 def _get_session():
@@ -34,7 +51,7 @@ def _get_session():
         GsSession.use(
             client_id=client_id,
             client_secret=client_secret,
-            scopes=("read_financial_data",),
+            scopes=("read_product_data", "read_financial_data"),
         )
         return GsSession.current
     except Exception as e:
@@ -42,124 +59,199 @@ def _get_session():
         return None
 
 
-def load_gs_factor_data(start, end):
-    """Load GS risk model factor exposures if accessible.
+def _resolve_assets(tickers, id_type="ticker"):
+    """Resolve ticker symbols to Marquee asset IDs."""
+    from gs_quant.markets.securities import SecurityMaster, AssetIdentifier
 
-    Attempts to pull: market, size, value, momentum, quality factors.
-    Returns DataFrame cached to disk.
+    identifier = (
+        AssetIdentifier.TICKER if id_type == "ticker"
+        else AssetIdentifier.BLOOMBERG_ID
+    )
+
+    resolved = {}
+    for name, symbol in tickers.items():
+        try:
+            asset = SecurityMaster.get_asset(symbol, identifier)
+            if asset:
+                resolved[name] = asset.get_marquee_id()
+        except Exception:
+            pass
+    return resolved
+
+
+def load_gs_index_data(start, end):
+    """Load daily close prices for macro indices via TREOD dataset.
+
+    Returns DataFrame with date index, one column per index (close prices).
+    Covers: SPX, VIX, NDX, RTY, MXEF, MXWO, MXEA, BCOMTR, DXY.
     """
     os.makedirs(CACHE_DIR, exist_ok=True)
-    cp = os.path.join(CACHE_DIR, f"gs_factors_{start}_{end}.csv")
+    cp = os.path.join(CACHE_DIR, f"gs_indices_{start}_{end}.csv")
     if os.path.exists(cp):
         df = pd.read_csv(cp, index_col=0, parse_dates=True)
-        print(f"  GS factors: {df.shape} (cached)")
+        print(f"  GS indices: {df.shape} (cached)")
         return df
 
     session = _get_session()
     if session is None:
         return pd.DataFrame()
 
-    try:
-        from gs_quant.data import Dataset
+    from gs_quant.api.gs.data import GsDataApi
 
-        # Try MACRO_GLOBAL dataset for macro indicators
-        datasets_to_try = [
-            ("MACRO_GLOBAL", "macro_global"),
-            ("SRDAILY", "sr_daily"),
-        ]
+    asset_ids = _resolve_assets(GS_INDEX_TICKERS, id_type="ticker")
+    if not asset_ids:
+        print("  No GS index assets resolved.")
+        return pd.DataFrame()
 
-        frames = {}
-        for ds_id, label in datasets_to_try:
-            try:
-                ds = Dataset(ds_id)
-                data = ds.get_data(
-                    start=pd.Timestamp(start),
-                    end=pd.Timestamp(end),
-                )
-                if not data.empty:
-                    frames[label] = data
-                    print(f"  GS {ds_id}: {data.shape}")
-            except Exception as e:
-                print(f"  GS {ds_id}: not accessible ({e})")
+    print(f"  Resolved {len(asset_ids)}/{len(GS_INDEX_TICKERS)} indices")
 
-        if frames:
-            combined = pd.concat(frames.values(), axis=1)
-            combined.to_csv(cp)
-            return combined
+    frames = {}
+    for name, mid in asset_ids.items():
+        try:
+            rows = GsDataApi.query_data(
+                query={
+                    "where": {"assetId": [mid]},
+                    "startDate": str(start),
+                    "endDate": str(end),
+                },
+                dataset_id="TREOD",
+            )
+            if rows:
+                df = pd.DataFrame(rows)
+                df["date"] = pd.to_datetime(df["date"])
+                series = df.set_index("date")["closePrice"].sort_index()
+                series.name = name
+                frames[name] = series
+                print(f"    {name}: {len(series)} days")
+        except Exception as e:
+            print(f"    {name}: {str(e)[:80]}")
 
-    except Exception as e:
-        print(f"  GS Quant data pull failed: {e}")
+    if not frames:
+        return pd.DataFrame()
 
-    return pd.DataFrame()
+    combined = pd.DataFrame(frames).sort_index().ffill().bfill()
+    combined.to_csv(cp)
+    print(f"  GS indices: {combined.shape}")
+    return combined
 
 
-def load_gs_fx_forwards(start, end, pairs=None):
-    """Load FX forward points for EM currency risk signals.
+def load_gs_fx_data(start, end):
+    """Load daily FX spot rates via FXSPOT_STANDARD dataset.
 
-    Args:
-        start, end: date range
-        pairs: list of currency pairs e.g. ["USDBRL", "USDCNY"]
+    Returns DataFrame with date index, one column per pair.
     """
-    if pairs is None:
-        pairs = ["USDBRL", "USDCNY", "USDKRW", "USDINR", "USDMXN"]
-
     os.makedirs(CACHE_DIR, exist_ok=True)
     cp = os.path.join(CACHE_DIR, f"gs_fx_{start}_{end}.csv")
     if os.path.exists(cp):
         df = pd.read_csv(cp, index_col=0, parse_dates=True)
-        print(f"  GS FX forwards: {df.shape} (cached)")
+        print(f"  GS FX: {df.shape} (cached)")
         return df
 
     session = _get_session()
     if session is None:
         return pd.DataFrame()
 
-    try:
-        from gs_quant.data import Dataset
+    from gs_quant.api.gs.data import GsDataApi
 
-        ds = Dataset("FXFORWARDPOINTS")
-        frames = {}
-        for pair in pairs:
-            try:
-                data = ds.get_data(
-                    start=pd.Timestamp(start),
-                    end=pd.Timestamp(end),
-                    bbid=pair,
-                )
-                if not data.empty:
-                    frames[pair] = data["forwardPoint"] if "forwardPoint" in data.columns else data.iloc[:, 0]
-            except Exception:
-                pass
+    asset_ids = _resolve_assets(GS_FX_PAIRS, id_type="bbg")
+    if not asset_ids:
+        print("  No GS FX assets resolved.")
+        return pd.DataFrame()
 
-        if frames:
-            df = pd.DataFrame(frames)
-            df.to_csv(cp)
-            print(f"  GS FX forwards: {df.shape}")
-            return df
+    frames = {}
+    for name, mid in asset_ids.items():
+        try:
+            rows = GsDataApi.query_data(
+                query={
+                    "where": {"assetId": [mid]},
+                    "startDate": str(start),
+                    "endDate": str(end),
+                },
+                dataset_id="FXSPOT_STANDARD",
+            )
+            if rows:
+                df = pd.DataFrame(rows)
+                df["date"] = pd.to_datetime(df["date"])
+                series = df.set_index("date")["spot"].sort_index()
+                series.name = name
+                frames[name] = series
+                print(f"    {name}: {len(series)} days")
+        except Exception as e:
+            print(f"    {name}: {str(e)[:80]}")
 
-    except Exception as e:
-        print(f"  GS FX data pull failed: {e}")
+    if not frames:
+        return pd.DataFrame()
 
-    return pd.DataFrame()
+    combined = pd.DataFrame(frames).sort_index().ffill().bfill()
+    combined.to_csv(cp)
+    print(f"  GS FX: {combined.shape}")
+    return combined
+
+
+def make_gs_macro_features(indices_df, fx_df=None, normalize=True):
+    """Convert GS index/FX data into macro regime features.
+
+    Derived features: VIX level, index momentum, cross-asset correlations,
+    FX momentum, EM vs DM spread, commodity regime.
+    """
+    features = pd.DataFrame(index=indices_df.index)
+
+    # VIX level and changes
+    if "vix" in indices_df.columns:
+        features["gs_vix"] = indices_df["vix"]
+        features["gs_vix_change_5d"] = indices_df["vix"].pct_change(5)
+        features["gs_vix_above_20"] = (indices_df["vix"] > 20).astype(float)
+
+    # Index momentum (21-day returns)
+    for col in ["spx", "ndx", "rty", "mxef", "mxwo", "mxea", "bcomtr", "dxy"]:
+        if col in indices_df.columns:
+            features[f"gs_{col}_mom_21d"] = indices_df[col].pct_change(21)
+
+    # EM vs DM spread (MXEF vs MXWO momentum differential)
+    if "mxef" in indices_df.columns and "mxwo" in indices_df.columns:
+        em_mom = indices_df["mxef"].pct_change(21)
+        dm_mom = indices_df["mxwo"].pct_change(21)
+        features["gs_em_dm_spread"] = em_mom - dm_mom
+
+    # Equity-commodity divergence
+    if "spx" in indices_df.columns and "bcomtr" in indices_df.columns:
+        features["gs_eq_cmd_spread"] = (
+            indices_df["spx"].pct_change(21) - indices_df["bcomtr"].pct_change(21)
+        )
+
+    # DXY regime
+    if "dxy" in indices_df.columns:
+        features["gs_dxy_mom_5d"] = indices_df["dxy"].pct_change(5)
+
+    # FX features
+    if fx_df is not None and not fx_df.empty:
+        for col in fx_df.columns:
+            features[f"gs_{col}_mom_5d"] = fx_df[col].pct_change(5)
+
+    features = features.ffill().bfill().fillna(0)
+
+    if normalize:
+        rolling_mean = features.rolling(252, min_periods=60).mean()
+        rolling_std = features.rolling(252, min_periods=60).std()
+        features = (features - rolling_mean) / (rolling_std + 1e-8)
+        features = features.clip(-3, 3).fillna(0)
+
+    return features
 
 
 def load_gs_data(start, end):
-    """Load all available GS Quant data and combine into feature DataFrame."""
+    """Load all available GS Quant data and return macro feature DataFrame."""
     print("Loading GS Quant data...")
-    factors = load_gs_factor_data(start, end)
-    fx = load_gs_fx_forwards(start, end)
+    indices = load_gs_index_data(start, end)
+    fx = load_gs_fx_data(start, end)
 
-    frames = []
-    if not factors.empty:
-        frames.append(factors)
-    if not fx.empty:
-        frames.append(fx)
-
-    if not frames:
-        print("  No GS Quant data available (may need higher access tier).")
+    if indices.empty and fx.empty:
+        print("  No GS Quant data available.")
         return pd.DataFrame()
 
-    combined = pd.concat(frames, axis=1)
-    combined = combined.sort_index().ffill().bfill()
-    print(f"  GS Quant combined: {combined.shape}")
-    return combined
+    if not indices.empty:
+        features = make_gs_macro_features(indices, fx)
+        print(f"  GS Quant macro features: {features.shape}")
+        return features
+
+    return pd.DataFrame()

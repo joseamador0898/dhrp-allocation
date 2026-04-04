@@ -9,7 +9,30 @@ os.environ["KMP_DUPLICATE_LIB_OK"] = "TRUE"
 
 # --- Cell 1: SETUP ---
 import warnings; warnings.filterwarnings("ignore")
+import glob
 import torch, numpy as np
+
+
+def clean_stale_results():
+    """Delete all stale results from previous runs."""
+    patterns = [
+        "results/*.csv", "results/*.png",
+        "results/models/*.pt",
+        "results/features/*.npz", "results/features/*.csv",
+        "results/full/*.csv",
+        "results/figures/*.png",
+    ]
+    total = 0
+    for pat in patterns:
+        for f in glob.glob(pat):
+            os.remove(f)
+            total += 1
+    if total:
+        print(f"Cleaned {total} stale result files.")
+
+
+clean_stale_results()
+
 print(f"PyTorch: {torch.__version__}")
 print(f"CUDA: {torch.cuda.is_available()}")
 device = "cuda" if torch.cuda.is_available() else "cpu"
@@ -78,8 +101,33 @@ if not headlines_df.empty:
 else:
     print('No headlines available. Proceeding with price-only features.')
 
-# --- Cell 5: QWEN3-8B (SKIPPED - needs GPU) ---
-print("\nSkipping Qwen3-8B (no GPU).")
+# --- Cell 5: QWEN3 STRUCTURED SENTIMENT (auto-selects 32B on A100, 8B on T4) ---
+from src.data.llm_features import _select_qwen_model, get_qwen3_sentiment, sentiment_to_features
+
+qwen_model = _select_qwen_model()
+sentiment_by_ticker = {}
+if qwen_model and headline_to_emb:
+    print(f'\n=== STRUCTURED SENTIMENT ({qwen_model}) ===')
+    tickers_with_headlines = headlines_df.groupby('ticker')['headline'].apply(list).to_dict()
+    batch_inputs = []
+    batch_tickers = []
+    for ticker, hdls in tickers_with_headlines.items():
+        if len(hdls) >= 3:  # only process tickers with enough headlines
+            batch_inputs.append(hdls[:15])
+            batch_tickers.append(ticker)
+
+    if batch_inputs:
+        sentiments = get_qwen3_sentiment(batch_inputs, device=device, model_name=qwen_model)
+        for ticker, sent in zip(batch_tickers, sentiments):
+            sentiment_by_ticker[ticker] = sentiment_to_features(sent)
+        print(f'  Sentiment extracted for {len(sentiment_by_ticker)} tickers')
+        if torch.cuda.is_available():
+            print(f'  VRAM after Qwen3: {torch.cuda.memory_allocated()/1e9:.2f} GB')
+else:
+    if not qwen_model:
+        print("\nNo GPU available for Qwen3 sentiment. Skipping.")
+    else:
+        print("\nNo headlines for Qwen3 sentiment. Skipping.")
 
 # --- Cell 6: BUILD TEXT FEATURE TENSORS ---
 from src.data.feature_engineering import build_dataset, DEFAULT_FDIM
@@ -120,28 +168,54 @@ if headline_to_emb:
 else:
     print('No text features available. Using price-only mode.')
 
-# --- Cell 7: LOAD MACRO FEATURES (FRED extended + GS Quant) ---
-from src.data.fred_loader import load_fred_data, make_macro_features
+# --- Cell 7: PER-UNIVERSE MACRO / SUPPLEMENTARY FEATURES ---
+from src.data.fred_loader import (
+    load_fred_data, make_macro_features,
+    make_commodity_features, make_em_features,
+    FRED_SERIES_COMMODITY, FRED_SERIES_EM,
+)
+from src.data.universe_config import UNIVERSE_DATA_CONFIG
 
-print('\n=== MACRO FEATURES ===')
-print('Loading FRED extended macro features...')
-fred_df = load_fred_data(START, END, extended=True)
-if not fred_df.empty:
-    macro_df = make_macro_features(fred_df)
-    print(f'Macro features: {macro_df.shape} ({macro_df.columns.tolist()})')
-else:
-    macro_df = None
-    print('FRED not available.')
+print('\n=== PER-UNIVERSE DATA SOURCES ===')
 
-# GS Quant (best-effort)
+# DM: full US FRED macro (VIX, yield curve, credit, CPI, etc.)
+dm_macro = None
+if UNIVERSE_DATA_CONFIG["DM"]["use_macro"]:
+    print('\n--- DM: Loading US FRED macro features ---')
+    fred_df = load_fred_data(START, END, extended=True)
+    if not fred_df.empty:
+        dm_macro = make_macro_features(fred_df)
+        print(f'  DM macro: {dm_macro.shape} ({dm_macro.columns.tolist()[:8]}...)')
+    else:
+        print('  FRED not available.')
+
+# GS Quant macro (DM only): SPX, VIX, NDX, RTY, MXEF, MXWO, MXEA, BCOMTR, DXY, EURUSD, USDJPY
 try:
     from src.data.gsquant_loader import load_gs_data
     gs_df = load_gs_data(START, END)
-    if not gs_df.empty and macro_df is not None:
-        macro_df = pd.concat([macro_df, gs_df], axis=1, join='outer').ffill().bfill()
-        print(f'Combined macro+GS: {macro_df.shape}')
+    if not gs_df.empty:
+        if dm_macro is not None:
+            dm_macro = pd.concat([dm_macro, gs_df], axis=1, join='outer').ffill().bfill()
+        else:
+            dm_macro = gs_df
+        print(f'  DM macro (FRED+GS): {dm_macro.shape}')
 except Exception as e:
-    print(f'GS Quant: {e}')
+    print(f'  GS Quant: {e}')
+
+# EM: NO US macro — text-only conditioning
+print('\n--- EM: No US macro (text-only LLM-DHRP) ---')
+
+# Commodities: NO US macro — text-only conditioning; SPGCI best-effort
+print('\n--- Commodities: No US macro (text-only LLM-DHRP) ---')
+
+if UNIVERSE_DATA_CONFIG["Commodities"]["spgci"]:
+    try:
+        from src.data.spgci_loader import load_spgci_data
+        spgci_df = load_spgci_data(START, END)
+        if not spgci_df.empty:
+            print(f'  SPGCI features: {spgci_df.shape}')
+    except Exception as e:
+        print(f'  SPGCI: {e}')
 
 # --- Cell 8: TRAIN ALL MODELS (DM Universe) ---
 from src.training.trainer import train_dhrp, train_llm_dhrp
@@ -155,13 +229,13 @@ dhrp_dm = train_dhrp(DM_prices, device=device, is_em=False, volume=DM_volume, fd
 
 llm_dhrp_dm = None
 if text_dm is not None:
-    print('\n--- Training LLM-DHRP (price + text + macro + volume) ---')
+    print('\n--- Training LLM-DHRP DM (price + text + macro + volume) ---')
     llm_dhrp_dm = train_llm_dhrp(
         DM_prices,
         text_features={'finbert': text_dm},
-        macro_features=macro_df.values if macro_df is not None else None,
+        macro_features=dm_macro.values if dm_macro is not None else None,
         device=device, is_em=False, volume=DM_volume, fdim=fdim,
-        use_text=True, use_macro=macro_df is not None,
+        use_text=True, use_macro=dm_macro is not None,
         fusion_type='cross_attention', depth=3,
         epochs=60, lr=3e-4,
     )
@@ -187,12 +261,12 @@ dhrp_em = train_dhrp(EM_prices, device=device, is_em=True, volume=EM_volume, fdi
 
 llm_dhrp_em = None
 if text_em is not None:
-    print('\n--- Training LLM-DHRP (EM) ---')
+    print('\n--- Training LLM-DHRP EM (price + text, NO macro) ---')
     llm_dhrp_em = train_llm_dhrp(
         EM_prices, text_features={'finbert': text_em},
-        macro_features=macro_df.values if macro_df is not None else None,
+        macro_features=None,
         device=device, is_em=True, volume=EM_volume, fdim=fdim,
-        use_text=True, use_macro=macro_df is not None,
+        use_text=True, use_macro=False,
         epochs=50, lr=1.5e-4,
     )
 
@@ -205,12 +279,12 @@ dhrp_cmd = train_dhrp(CMD_prices, device=device, is_em=False, volume=CMD_volume,
 
 llm_dhrp_cmd = None
 if text_cmd is not None:
-    print('\n--- Training LLM-DHRP (Commodities) ---')
+    print('\n--- Training LLM-DHRP Commodities (price + text, NO macro) ---')
     llm_dhrp_cmd = train_llm_dhrp(
         CMD_prices, text_features={'finbert': text_cmd},
-        macro_features=macro_df.values if macro_df is not None else None,
+        macro_features=None,
         device=device, is_em=False, volume=CMD_volume, fdim=fdim,
-        use_text=True, use_macro=macro_df is not None,
+        use_text=True, use_macro=False,
         epochs=60, lr=3e-4,
     )
 
@@ -238,21 +312,21 @@ print('\n=== BACKTESTS ===')
 dm_res = rolling_backtest(
     DM_prices, is_em=False, dhrp_model=dhrp_dm,
     llm_dhrp_model=llm_dhrp_dm, text_features={'finbert': text_dm} if text_dm is not None else None,
-    macro_features=macro_df, methods=METHODS, volume=DM_volume, purge_days=5,
+    macro_features=dm_macro, methods=METHODS, volume=DM_volume, purge_days=5,
 )
 print(f'DM: {len(dm_res)} observations')
 
 em_res = rolling_backtest(
     EM_prices, is_em=True, dhrp_model=dhrp_em,
     llm_dhrp_model=llm_dhrp_em, text_features={'finbert': text_em} if text_em is not None else None,
-    macro_features=macro_df, methods=METHODS, volume=EM_volume, purge_days=5,
+    macro_features=None, methods=METHODS, volume=EM_volume, purge_days=5,
 )
 print(f'EM: {len(em_res)} observations')
 
 cmd_res = rolling_backtest(
     CMD_prices, is_em=False, dhrp_model=dhrp_cmd,
     llm_dhrp_model=llm_dhrp_cmd, text_features={'finbert': text_cmd} if text_cmd is not None else None,
-    macro_features=macro_df, methods=METHODS, volume=CMD_volume, purge_days=5,
+    macro_features=None, methods=METHODS, volume=CMD_volume, purge_days=5,
 )
 print(f'Commodities: {len(cmd_res)} observations')
 
@@ -262,7 +336,7 @@ for tc_bps in [10, 20, 50]:
     dm_tc = rolling_backtest(
         DM_prices, is_em=False, dhrp_model=dhrp_dm,
         llm_dhrp_model=llm_dhrp_dm, text_features={'finbert': text_dm} if text_dm is not None else None,
-        macro_features=macro_df, methods=['DHRP', 'LLM_DHRP', 'HRP'] if llm_dhrp_dm else ['DHRP', 'HRP'],
+        macro_features=dm_macro, methods=['DHRP', 'LLM_DHRP', 'HRP'] if llm_dhrp_dm else ['DHRP', 'HRP'],
         volume=DM_volume, transaction_cost_bps=tc_bps, purge_days=5,
     )
     from src.evaluation.statistics import compute_stats as cs
@@ -431,7 +505,9 @@ print(f'Total assets: {DM_prices.shape[1] + EM_prices.shape[1] + CMD_prices.shap
 print(f'Feature dim: {fdim} (with volume features)')
 print(f'Methods compared: {sorted(dm_res["method"].unique())}')
 print(f'Headlines: {len(headlines_df)} unique')
-print(f'Macro features: {macro_df.shape[1] if macro_df is not None else 0}')
+print(f'DM macro features: {dm_macro.shape[1] if dm_macro is not None else 0}')
+print(f'EM macro: None (text-only)')
+print(f'CMD macro: None (text-only)')
 print(f'Device used: {device}')
 
 print('\nKey files saved:')

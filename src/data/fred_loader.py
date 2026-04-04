@@ -28,6 +28,22 @@ FRED_SERIES_EXTENDED = {
     "dollar_index": "DTWEXBGS",      # Trade-Weighted Dollar Index
 }
 
+# Commodity-specific FRED price series (for Commodities universe)
+FRED_SERIES_COMMODITY = {
+    "wti_crude": "DCOILWTICO",       # WTI Crude Oil (daily)
+    "brent_crude": "DCOILBRENTEU",   # Brent Crude Oil (daily)
+    "gold_am_fix": "GOLDAMGBD228NLBM",  # Gold AM London Fix (daily)
+    "copper": "PCOPPUSDM",           # Global Copper Price (monthly)
+    "wheat_global": "PWHEAMTUSDM",   # Global Wheat Price (monthly)
+    "corn_maize": "PMAIZMTUSDM",     # Global Corn/Maize Price (monthly)
+}
+
+# EM-specific FRED series (for Emerging Markets universe)
+FRED_SERIES_EM = {
+    "em_corp_oas": "BAMLEMCBPIOAS",       # EM Corporate Bond OAS (daily)
+    "em_hy_oas": "BAMLEMHBHYCRPIOAS",     # EM High Yield Bond OAS (daily)
+}
+
 
 def load_fred_data(start, end, series=None, api_key=None, extended=True):
     """Load macro data from FRED API.
@@ -138,3 +154,71 @@ def get_macro_vector(macro_df, date, feature_names=None):
         return np.zeros(len(cols), dtype=np.float32)
 
     return macro_df.iloc[idx][cols].values.astype(np.float32)
+
+
+def make_commodity_features(fred_df, normalize=True):
+    """Convert commodity FRED data into regime features.
+
+    Derived features: crude term spread, gold momentum, copper momentum,
+    agriculture momentum, crude volatility regime.
+    """
+    if fred_df.empty:
+        return fred_df
+
+    features = fred_df.copy()
+
+    # Crude oil term spread (Brent - WTI)
+    if "brent_crude" in features.columns and "wti_crude" in features.columns:
+        features["crude_term_spread"] = features["brent_crude"] - features["wti_crude"]
+
+    # Momentum signals (21-day % change)
+    for col in ["wti_crude", "gold_am_fix", "copper", "wheat_global", "corn_maize"]:
+        if col in features.columns:
+            features[f"{col}_mom_21d"] = features[col].pct_change(21)
+
+    # Crude volatility regime (21-day rolling std of daily returns)
+    if "wti_crude" in features.columns:
+        crude_ret = features["wti_crude"].pct_change()
+        features["crude_vol_21d"] = crude_ret.rolling(21, min_periods=10).std()
+
+    features = features.ffill().bfill().fillna(0)
+
+    if normalize:
+        rolling_mean = features.rolling(252, min_periods=60).mean()
+        rolling_std = features.rolling(252, min_periods=60).std()
+        features = (features - rolling_mean) / (rolling_std + 1e-8)
+        features = features.clip(-3, 3).fillna(0)
+
+    return features
+
+
+def make_em_features(fred_df, normalize=True):
+    """Convert EM FRED data into credit regime features.
+
+    Derived features: OAS level changes, credit stress indicator,
+    spread widening/tightening momentum.
+    """
+    if fred_df.empty:
+        return fred_df
+
+    features = fred_df.copy()
+
+    # OAS momentum (5-day changes)
+    for col in ["em_corp_oas", "em_hy_oas"]:
+        if col in features.columns:
+            features[f"{col}_change_5d"] = features[col].diff(5)
+            features[f"{col}_change_21d"] = features[col].diff(21)
+
+    # Credit stress indicator: HY-IG spread differential
+    if "em_hy_oas" in features.columns and "em_corp_oas" in features.columns:
+        features["em_hy_ig_diff"] = features["em_hy_oas"] - features["em_corp_oas"]
+
+    features = features.ffill().bfill().fillna(0)
+
+    if normalize:
+        rolling_mean = features.rolling(252, min_periods=60).mean()
+        rolling_std = features.rolling(252, min_periods=60).std()
+        features = (features - rolling_mean) / (rolling_std + 1e-8)
+        features = features.clip(-3, 3).fillna(0)
+
+    return features
