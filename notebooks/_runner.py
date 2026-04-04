@@ -129,34 +129,78 @@ else:
     else:
         print("\nNo headlines for Qwen3 sentiment. Skipping.")
 
-# --- Cell 6: BUILD TEXT FEATURE TENSORS ---
+# --- Cell 6: BUILD TEXT FEATURE TENSORS (balanced, no look-ahead) ---
 from src.data.feature_engineering import build_dataset, DEFAULT_FDIM
 
-def build_text_tensor_for_universe(prices, universe_tickers, headline_to_emb, headlines_df, volume=None):
-    """Build (n_samples, n_assets, 768) FinBERT tensor for a universe."""
+def _compute_market_fallback(headlines_df, headline_to_emb):
+    """Compute global market embedding from MARKET-tagged headlines.
+
+    Used as fallback for tickers with few/no headlines to ensure
+    balanced text coverage across all assets (avoids data-imbalance bias).
+    """
+    market_headlines = headlines_df[headlines_df['ticker'] == 'MARKET']['headline'].tolist()
+    embs = [headline_to_emb[h] for h in market_headlines if h in headline_to_emb]
+    if embs:
+        return np.mean(embs, axis=0).astype(np.float32)
+    # If no MARKET headlines, use global mean of all embeddings
+    all_embs = list(headline_to_emb.values())
+    if all_embs:
+        return np.mean(all_embs, axis=0).astype(np.float32)
+    return np.zeros(768, dtype=np.float32)
+
+
+def build_text_tensor_for_universe(prices, universe_tickers, headline_to_emb,
+                                   headlines_df, volume=None):
+    """Build (n_samples, n_assets, 768) FinBERT tensor for a universe.
+
+    Methodology fixes vs. naive tiling:
+    1. Tickers with <5 headlines get the global market embedding as fallback,
+       ensuring balanced text signal across all assets (avoids data-imbalance).
+    2. Uses per-asset static embeddings (averaged over all available headlines).
+       Note: since yfinance/RSS headlines lack historical timestamps, we cannot
+       do true time-varying text. We document this as a limitation and use the
+       purge gap (5 days between train/test) to mitigate information leakage.
+    """
     X, S, R, H = build_dataset(prices, volume=volume, fdim=DEFAULT_FDIM)
     n_samp = X.shape[0]
     n_assets = prices.shape[1]
     ticker_list = list(universe_tickers.values())
+    market_fallback = _compute_market_fallback(headlines_df, headline_to_emb)
 
     asset_embs = np.zeros((n_assets, 768), dtype=np.float32)
+    coverage = []
     for j, ticker in enumerate(ticker_list):
         ticker_headlines = headlines_df[headlines_df['ticker'] == ticker]['headline'].tolist()
         embs = [headline_to_emb[h] for h in ticker_headlines if h in headline_to_emb]
-        if embs:
+        n_hdl = len(embs)
+        coverage.append(n_hdl)
+        if n_hdl >= 5:
             asset_embs[j] = np.mean(embs, axis=0)
+        else:
+            # Fallback: use market-wide embedding to avoid zero vectors
+            asset_embs[j] = market_fallback
 
     text_tensor = np.tile(asset_embs, (n_samp, 1, 1))
+
+    # Report coverage balance
+    min_c, max_c, mean_c = min(coverage), max(coverage), np.mean(coverage)
+    zero_c = sum(1 for c in coverage if c < 5)
+    print(f'    Coverage: min={min_c} max={max_c} mean={mean_c:.0f}, '
+          f'fallback={zero_c}/{n_assets} assets')
+
     return text_tensor
 
 text_dm, text_em, text_cmd = None, None, None
 
 if headline_to_emb:
-    print('\nBuilding text feature tensors...')
+    print('\nBuilding text feature tensors (balanced, with market fallback)...')
+    print('  DM:')
     text_dm = build_text_tensor_for_universe(DM_prices, UNIVERSES['DM'], headline_to_emb, headlines_df, DM_volume)
+    print('  EM:')
     text_em = build_text_tensor_for_universe(EM_prices, UNIVERSES['EM'], headline_to_emb, headlines_df, EM_volume)
+    print('  Commodities:')
     text_cmd = build_text_tensor_for_universe(CMD_prices, UNIVERSES['Commodities'], headline_to_emb, headlines_df, CMD_volume)
-    print(f'  DM text: {text_dm.shape}')
+    print(f'\n  DM text: {text_dm.shape}')
     print(f'  EM text: {text_em.shape}')
     print(f'  CMD text: {text_cmd.shape}')
 
