@@ -94,7 +94,7 @@ def get_finbert_embeddings(headlines, batch_size=None, device="cuda"):
     if batch_size is None:
         if device == "cuda" and torch.cuda.is_available():
             props = torch.cuda.get_device_properties(0)
-    vram_gb = getattr(props, "total_memory", getattr(props, "total_mem", 0)) / 1e9
+            vram_gb = getattr(props, "total_memory", getattr(props, "total_mem", 0)) / 1e9
             batch_size = 256 if vram_gb >= 40 else 64
         else:
             batch_size = 32
