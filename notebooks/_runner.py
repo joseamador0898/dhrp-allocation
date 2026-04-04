@@ -88,6 +88,16 @@ headlines_df = load_all_headlines(
 )
 print(f'Total unique headlines: {len(headlines_df)}')
 
+# --- Date range alignment diagnostics ---
+print(f'\n=== DATA DATE RANGES ===')
+print(f'  Prices:     {DM_prices.index.min().strftime("%Y-%m-%d")} to {DM_prices.index.max().strftime("%Y-%m-%d")} ({len(DM_prices)} days)')
+if not headlines_df.empty:
+    hdl_dates = pd.to_datetime(headlines_df['date'])
+    print(f'  Headlines:  {hdl_dates.min().strftime("%Y-%m-%d")} to {hdl_dates.max().strftime("%Y-%m-%d")} ({len(headlines_df)} unique)')
+    print(f'    Note: yfinance/RSS headlines are recent only (~30 days).')
+    print(f'    PhraseBank/FiQA are static datasets (no timestamps).')
+    print(f'    Text embeddings are per-asset averages, not time-varying.')
+
 # --- Cell 4: FINBERT EMBEDDINGS ---
 from src.data.llm_features import get_finbert_embeddings
 
@@ -247,7 +257,15 @@ except Exception as e:
     print(f'  GS Quant: {e}')
 
 # EM + Commodities: same FRED+GS macro as DM
-print(f'\n--- EM + Commodities: same macro as DM ({dm_macro.shape if dm_macro is not None else "None"}) ---')
+print(f'\n--- EM + Commodities: same macro as DM ---')
+if dm_macro is not None:
+    print(f'  Macro: {dm_macro.index.min().strftime("%Y-%m-%d")} to {dm_macro.index.max().strftime("%Y-%m-%d")} '
+          f'({dm_macro.shape[0]} days, {dm_macro.shape[1]} features)')
+    # Trim macro to match price date range for consistency
+    common_start = max(DM_prices.index.min(), dm_macro.index.min())
+    common_end = min(DM_prices.index.max(), dm_macro.index.max())
+    dm_macro = dm_macro.loc[common_start:common_end]
+    print(f'  Aligned to prices: {common_start.strftime("%Y-%m-%d")} to {common_end.strftime("%Y-%m-%d")} ({len(dm_macro)} days)')
 
 # --- Cell 8: TRAIN ALL MODELS (DM Universe) ---
 from src.training.trainer import train_dhrp, train_llm_dhrp
