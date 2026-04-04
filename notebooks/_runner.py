@@ -202,20 +202,8 @@ try:
 except Exception as e:
     print(f'  GS Quant: {e}')
 
-# EM: NO US macro — text-only conditioning
-print('\n--- EM: No US macro (text-only LLM-DHRP) ---')
-
-# Commodities: NO US macro — text-only conditioning; SPGCI best-effort
-print('\n--- Commodities: No US macro (text-only LLM-DHRP) ---')
-
-if UNIVERSE_DATA_CONFIG["Commodities"]["spgci"]:
-    try:
-        from src.data.spgci_loader import load_spgci_data
-        spgci_df = load_spgci_data(START, END)
-        if not spgci_df.empty:
-            print(f'  SPGCI features: {spgci_df.shape}')
-    except Exception as e:
-        print(f'  SPGCI: {e}')
+# EM + Commodities: same FRED+GS macro as DM
+print(f'\n--- EM + Commodities: same macro as DM ({dm_macro.shape if dm_macro is not None else "None"}) ---')
 
 # --- Cell 8: TRAIN ALL MODELS (DM Universe) ---
 from src.training.trainer import train_dhrp, train_llm_dhrp
@@ -261,12 +249,12 @@ dhrp_em = train_dhrp(EM_prices, device=device, is_em=True, volume=EM_volume, fdi
 
 llm_dhrp_em = None
 if text_em is not None:
-    print('\n--- Training LLM-DHRP EM (price + text, NO macro) ---')
+    print('\n--- Training LLM-DHRP EM (price + text + macro) ---')
     llm_dhrp_em = train_llm_dhrp(
         EM_prices, text_features={'finbert': text_em},
-        macro_features=None,
+        macro_features=dm_macro.values if dm_macro is not None else None,
         device=device, is_em=True, volume=EM_volume, fdim=fdim,
-        use_text=True, use_macro=False,
+        use_text=True, use_macro=dm_macro is not None,
         epochs=50, lr=1.5e-4,
     )
 
@@ -279,12 +267,12 @@ dhrp_cmd = train_dhrp(CMD_prices, device=device, is_em=False, volume=CMD_volume,
 
 llm_dhrp_cmd = None
 if text_cmd is not None:
-    print('\n--- Training LLM-DHRP Commodities (price + text, NO macro) ---')
+    print('\n--- Training LLM-DHRP Commodities (price + text + macro) ---')
     llm_dhrp_cmd = train_llm_dhrp(
         CMD_prices, text_features={'finbert': text_cmd},
-        macro_features=None,
+        macro_features=dm_macro.values if dm_macro is not None else None,
         device=device, is_em=False, volume=CMD_volume, fdim=fdim,
-        use_text=True, use_macro=False,
+        use_text=True, use_macro=dm_macro is not None,
         epochs=60, lr=3e-4,
     )
 
@@ -319,14 +307,14 @@ print(f'DM: {len(dm_res)} observations')
 em_res = rolling_backtest(
     EM_prices, is_em=True, dhrp_model=dhrp_em,
     llm_dhrp_model=llm_dhrp_em, text_features={'finbert': text_em} if text_em is not None else None,
-    macro_features=None, methods=METHODS, volume=EM_volume, purge_days=5,
+    macro_features=dm_macro, methods=METHODS, volume=EM_volume, purge_days=5,
 )
 print(f'EM: {len(em_res)} observations')
 
 cmd_res = rolling_backtest(
     CMD_prices, is_em=False, dhrp_model=dhrp_cmd,
     llm_dhrp_model=llm_dhrp_cmd, text_features={'finbert': text_cmd} if text_cmd is not None else None,
-    macro_features=None, methods=METHODS, volume=CMD_volume, purge_days=5,
+    macro_features=dm_macro, methods=METHODS, volume=CMD_volume, purge_days=5,
 )
 print(f'Commodities: {len(cmd_res)} observations')
 
@@ -505,9 +493,7 @@ print(f'Total assets: {DM_prices.shape[1] + EM_prices.shape[1] + CMD_prices.shap
 print(f'Feature dim: {fdim} (with volume features)')
 print(f'Methods compared: {sorted(dm_res["method"].unique())}')
 print(f'Headlines: {len(headlines_df)} unique')
-print(f'DM macro features: {dm_macro.shape[1] if dm_macro is not None else 0}')
-print(f'EM macro: None (text-only)')
-print(f'CMD macro: None (text-only)')
+print(f'Macro features (all universes): {dm_macro.shape[1] if dm_macro is not None else 0}')
 print(f'Device used: {device}')
 
 print('\nKey files saved:')

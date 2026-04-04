@@ -10,18 +10,15 @@ UNIVERSE_DATA_CONFIG = {
         "use_text": True,
         "use_macro": True,
         "macro_source": "fred_us",
-        "spgci": False,
     },
     "EM": {
         "use_text": True,
-        "use_macro": False,
-        "macro_source": None,
-        "spgci": False,
+        "use_macro": True,
+        "macro_source": "fred_us",
     },
     "Commodities": {
         "use_text": True,
-        "use_macro": False,
-        "macro_source": None,
-        "spgci": True,
+        "use_macro": True,
+        "macro_source": "fred_us",
     },
 }
