@@ -93,7 +93,8 @@ def get_finbert_embeddings(headlines, batch_size=None, device="cuda"):
 
     if batch_size is None:
         if device == "cuda" and torch.cuda.is_available():
-            vram_gb = torch.cuda.get_device_properties(0).total_mem / 1e9
+            props = torch.cuda.get_device_properties(0)
+    vram_gb = getattr(props, "total_memory", getattr(props, "total_mem", 0)) / 1e9
             batch_size = 256 if vram_gb >= 40 else 64
         else:
             batch_size = 32
@@ -134,7 +135,8 @@ def _select_qwen_model():
     import torch
     if not torch.cuda.is_available():
         return None
-    vram_gb = torch.cuda.get_device_properties(0).total_mem / 1e9
+    props = torch.cuda.get_device_properties(0)
+    vram_gb = getattr(props, "total_memory", getattr(props, "total_mem", 0)) / 1e9
     if vram_gb >= 40:
         return "Qwen/Qwen3-32B"   # A100/H100: best reasoning + JSON output
     elif vram_gb >= 12:
