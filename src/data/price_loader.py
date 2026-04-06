@@ -11,26 +11,23 @@ import pandas_datareader.data as pdr
 # Cache directory for downloaded data
 CACHE_DIR = os.path.join(os.path.dirname(__file__), "..", "..", "data", "cache")
 
-# Default asset universes
+# Default asset universes — balanced at ~10 assets each
+# GLD is in Commodities only (no overlap with DM)
 UNIVERSES = {
     "DM": {
-        "US": "SPY", "QQQ": "QQQ", "IWM": "IWM", "DIA": "DIA",
-        "EAFE": "EFA", "Europe": "VGK", "Pacific": "VPL",
-        "Financials": "XLF", "Tech": "XLK", "Energy": "XLE",
-        "Health": "XLV", "Industrial": "XLI", "Materials": "XLB",
-        "Utilities": "XLU", "Staples": "XLP", "Discretionary": "XLY",
-        "RealEstate": "XLRE",
-        "Bonds": "TLT", "Gold": "GLD", "Dollar": "UUP",
+        "US": "SPY", "Nasdaq": "QQQ", "SmallCap": "IWM",
+        "EAFE": "EFA", "Europe": "VGK",
+        "LongBond": "TLT", "MidBond": "IEF", "CorpBond": "LQD",
+        "REIT": "VNQ", "Dollar": "UUP",
     },
     "DM_small": {
-        "US": "SPY", "EAFE": "EFA", "Bonds": "TLT", "Gold": "GLD", "Dollar": "UUP",
+        "US": "SPY", "EAFE": "EFA", "Bonds": "TLT", "Dollar": "UUP",
     },
     "EM": {
         "EM": "EEM", "Brazil": "EWZ", "China": "FXI",
-        "Korea": "EWY", "Taiwan": "EWT", "HongKong": "EWH",
-        "Thailand": "THD", "Vietnam": "VNM", "India": "INDA",
-        "Mexico": "EWW", "Japan": "EWJ",
-        "Turkey": "TUR", "SouthAfrica": "EZA", "Poland": "EPOL",
+        "Korea": "EWY", "Taiwan": "EWT", "India": "INDA",
+        "Mexico": "EWW", "SouthAfrica": "EZA",
+        "Thailand": "THD", "Turkey": "TUR",
     },
     "EM_small": {
         "EM": "EEM", "Brazil": "EWZ", "China": "FXI", "Korea": "EWY",

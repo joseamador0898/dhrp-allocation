@@ -395,7 +395,7 @@ for tc_bps in [10, 20, 50]:
 
 # --- Cell 11: RESULTS & STATISTICAL TESTS ---
 from src.evaluation.statistics import compute_stats, sharpe_difference_test, diebold_mariano_test, fdr_correct, subperiod_analysis
-from src.evaluation.factor_analysis import factor_analysis
+from src.evaluation.factor_analysis import factor_analysis, load_aqr_commodity_factors, commodity_factor_analysis
 
 os.makedirs('results/full', exist_ok=True)
 
@@ -414,6 +414,20 @@ for label, res, prices, is_em, volume in [
         table = stats.merge(factors, on='Method', how='left').round(3)
     except Exception:
         table = stats.round(3)
+
+    # Commodity-specific factor analysis using AQR Value & Momentum
+    if label == 'Commodities':
+        try:
+            aqr = load_aqr_commodity_factors(
+                prices.index[0].strftime('%Y-%m-%d'),
+                prices.index[-1].strftime('%Y-%m-%d'),
+            )
+            cm_factors = commodity_factor_analysis(res, aqr)
+            print(f'\n--- Commodity Factor Analysis (AQR Value & Momentum) ---')
+            print(cm_factors.to_string(index=False))
+            cm_factors.to_csv(f'results/full/{label}_aqr_factors.csv', index=False)
+        except Exception as e:
+            print(f'  AQR commodity factors failed: {e}')
     print(table.to_string(index=False))
 
     # Statistical tests vs HRP with FDR correction
