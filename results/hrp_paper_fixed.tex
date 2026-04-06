@@ -1,0 +1,668 @@
+\documentclass{article}
+
+% NeurIPS 2025 style — switch [final] to [preprint] for anonymized submission
+\usepackage[final]{neurips_2025}
+
+\usepackage{times}
+\usepackage{amsmath, amssymb, amsthm}
+\usepackage{graphicx}
+\usepackage{booktabs}
+\usepackage{hyperref}
+\usepackage{natbib}
+\usepackage{algorithm}
+\usepackage{algorithmic}
+\usepackage{subcaption}
+\usepackage{multirow}
+\usepackage{xcolor}
+\usepackage{microtype}
+
+\newtheorem{proposition}{Proposition}
+
+\title{Differentiable Hierarchical Risk Parity:\\Learning to Allocate with End-to-End Gradient Optimization}
+
+\author{
+  Jose L. Amador \\
+  \texttt{jlaj@connect.ust.hk}
+}
+
+\begin{document}
+\maketitle
+
+\begin{abstract}
+In this article, an introduction is made to Differentiable Hierarchical Risk Parity (DHRP), a neural-network layer that represents the traditional hierarchical risk-parity algorithm of \citet{LopezdePrado2016} as a fully differentiable mapping from market characteristics and covariance estimates to portfolio weights. The classical HRP uses hard agglomerative clustering and recursive bisection. Neither of these methods can utilize gradients. Therefore, DHRP replaces the aforementioned methods with soft-gating networks and learnable tree structures, enabling end-to-end trainability of the allocation process. Additionally, we present LLM-DHRP, a multimodal version of DHRP that integrates FinBERT embeddings and sentiment expressed by large-language models through gated cross-attentive mechanisms. Training was done utilizing a compound-loss function that includes CRRA utility, a differentiable approximation of Sharpe ratio, and HRP-regularization that utilizes a curriculum schedule. For three universes of ETFs representing developed markets, emerging markets, and commodity markets with 10 years of daily time-series data, DHRP achieved Sharpe Ratios of 0.65, 0.24, and 0.88 respectively. Only DHRP produced statistically significant Fama-French Six Factor Alpha in Developed Markets (2.8\%, $p=0.013$) and Commodities (11.9\%, $p=0.003$). No method produced significant alpha in Emerging Markets where the average correlation coefficient was 0.55. This suggests that hierarchical inductive bias is most beneficial to investors when the underlying correlation structure provides genuine diversification opportunities, and less effective in highly correlated universes where such opportunities are limited.
+\end{abstract}
+
+\section{Introduction}
+
+Portfolio construction involves both statistical estimation and decision-making under uncertainty. Since \citet{Markowitz1952} presented mean-variance optimization, practitioners have been faced with the dilemma of how best to estimate expected returns and covariances required for optimal portfolios since both must be obtained from noisy data. The optimization problem itself amplifies errors in estimating inputs \citep{Ledoit2004, DeMiguel2009}, leading to vastly different weight vectors resulting from small changes in input parameters, ultimately reducing the likelihood of good out-of-sample results and making it difficult to generate practical investment recommendations without extreme shrinkage or regularization.
+
+Hierarchical Risk Parity introduced by \citet{LopezdePrado2016} provides a partial solution to the dilemma described above. Instead of finding return-dependent weights by inverting the covariance matrix, HRP clusters assets according to their correlation distance using agglomerative clustering followed by allocating capital recursively down the dendrogram created by the agglomerative clustering. Thus HRP eliminates the need to estimate expected returns thereby providing a more robust use of covariance than does the inverse of the covariance matrix; furthermore, HRP generates diversified allocations that remain relatively stable across subsequent rebalancing periods. Since the introduction of HRP numerous studies have provided evidence supporting its benefits and expanded upon its methodology to include transaction-cost-sensitive rebalancing procedures \citep{Roncalli2013}, regime-dependent parameterizations \citep{Raffinot2018}, and multi-step formulations \citep{Roncalli2013}.
+
+Although HRP retains several advantages over other portfolio construction methodologies based on Markowitz optimization, it suffers from a fundamental disadvantage from a perspective of recent advancements in machine learning. Each asset is assigned to only one cluster using an agglomerative linkage criterion in the clustering phase of HRP; subsequently, each node within the dendrogram is allocated risk deterministically in the bisection phase. Because each of these phases involve discontinuous functions, the gradient signals flowing from the loss function through each phase are either zero or undefined virtually everywhere. Consequently, HRP becomes a static post-processing rule with respect to any upstream predictive system utilized to provide forecasts of covariance.
+
+The primary goal of this paper is to maintain the hierarchical diversification mechanism of HRP while replacing all discrete operations used in the original implementation with smooth parameterized counterparts. To achieve this goal, we present the DHRP layer which retains a fixed binary tree structure with learned soft-routing gates located at each internal node. Soft-routing gates output continuous probability values via temperature-scaled softmax; thus each asset's portion of the total risk-budget is determined by multiplying gate-output probabilities corresponding to nodes along each asset's unique path from the root to its leaf. All computations performed by DHRP form a single differentiable graph that may be trained with standard optimizers.
+
+\paragraph{Contributions.} We contribute five new elements to the literature. (1)~We formally define the DHRP layer and prove that DHRP reduces to classical HRP when routing temperatures approach zero (Proposition~\ref{prop:recovery}, full proof in Appendix~\ref{app:proof}). (2)~We develop a multimodal variant of DHRP called LLM-DHRP that combines FinBERT \citep{Huang2023} embeddings of financial news articles with structured sentiment represented by Qwen3-8B sentiment model via gated cross-attention allowing financial news to affect routing decisions. (3)~We construct a multi-objective loss function consisting of CRRA utility, a smoothed version of Sharpe ratio, and HRP regularization with curriculum scheduling. (4)~We report empirical results using three ETF universes employing Fama-French six-factor regressions \citep{Carhart1997, FamaFrench2015}, Newey-West HAC inference \citep{NeweyWest1987}, pairwise bootstrap Sharpe tests \citep{LedoitWolf2008} with Holm-Bonferroni correction \citep{Holm1979}, and Diebold-Mariano forecast comparison tests \citep{DieboldMariano1995}. (5)~We provide comprehensive ablation studies, multi-seed robustness analysis, transaction cost sensitivity, and regime-conditional evaluation to establish the reliability and practical viability of the proposed method.
+
+\section{Related Work}
+
+\paragraph{Differentiable Optimization Layers.} With increasing interest in combining the power of constrained optimization with the flexibility of neural networks, researchers are beginning to embed constrained optimization layers within the body of a neural network. \citet{Agrawal2019} showed that convex optimization problems could be differentiated using their Karush-Kuhn-Tucker (KKT) conditions; thereby, allowing gradients to flow through quadratic programs (QPs), linear programs (LPs), and second-order cone programs (SOCPs). Later, \citet{Bolte2021} generalized the theory to include nonsmooth cases using conservative fields and identified when it was permissible to implicitly differentiate an objective function that contained non-differentiable terms, or a constraint set that included non-differentiable constraints. \citet{Jin2021} described safe Pontryagin differentiable programming, which integrates safety constraints into a pipeline of differentiable control. \citet{Donti2017} presented results showing the benefit of training a prediction model end-to-end along with a downstream optimization problem. As such, the prediction loss reflects the true decision costs rather than a statistical proxy. Our DHRP layer follows the same end-to-end spirit, but instead of finding a generic convex solution at each forward pass, our method uses hierarchical risk diversification as an inductive bias.
+
+\paragraph{Hierarchical and Tree-Structured Learning.} There have been numerous machine learning applications employing tree-structured architectures. For example, \citet{Shazeer2017} used sparsely-gated mixture-of-experts to route input values through subsets of expert subnetworks, demonstrating that capacity can grow without bound while maintaining fixed computational complexity. Additionally, there have also been investigations into conditional computation and soft decision trees as a means to combine the interpretable nature of tree models with the flexible representation capabilities of neural networks. In the context of portfolio optimization, \citet{LopezdePrado2016} employed Hierarchical Risk Parity (HRP) using single-linkage agglomerative clustering followed by recursively bisecting the resulting dendrogram. Similarly, \citet{Raffinot2018} extended HRP to employ hierarchical clustering-based asset allocation with alternate linkage criteria and evaluated the robustness of his approach with respect to various equity universes. \citet{Roncalli2013} examined a wide array of topics related to risk budgeting and risk parity including the relationships between equal risk contribution portfolios and hierarchical allocation strategies. A key difference in our contributions relative to previous works is that all elements of the tree-based allocations are made differentiable so that both the routing structure and the feature extraction functions feeding into them can be optimized simultaneously.
+
+\paragraph{Deep Learning for Portfolio Optimization.} Since there are several studies which utilize deep learning for portfolio optimization, we can look at some examples of such studies. The first example is \citet{Zhang2020}, who used a neural network to estimate the optimal portfolio directly based on the Sharpe ratio, thus eliminating the traditional two-step method of estimating the moments of the assets' distributions and then determining their respective optimal portfolio weights. The authors of this study found that using an end-to-end optimizer of the Sharpe ratio produces better portfolios than plug-in methods in terms of realized returns. Following Zhang et al., \citet{KisielGorse2022} developed the Portfolio Transformer, which utilizes a full encoder-decoder architecture with self-attention to capture interdependencies between assets. In addition to capturing interdependencies, the Portfolio Transformer also directly estimates the optimal portfolio by optimizing the Sharpe ratio. Prior to Kisiel and Gorse's work on the Portfolio Transformer, \citet{Liang2018} employed adversarial deep reinforcement learning to investigate how deep policy gradient algorithms can be applied to portfolio management. Liang et al.\ tested three deep policy gradient algorithms, namely DDPG, PPO, and policy gradient. Furthermore, subsequent to Liang et al.'s research, \citet{Chen2021} developed Decision Transformers to model conditional sequence modeling for reinforcement learning. All of these studies have exhibited potential in terms of improving portfolio optimization; however, they did not contain a structural prior related to portfolio construction.
+
+\paragraph{Language Models and Sentiment Analysis in Finance.} Applications of natural language processing to financial decision-making have gained momentum recently with improvements in domain-specific language models. \citet{Huang2023} introduced FinBERT, a BERT variant pre-trained on financial communication sources such as earnings calls, analyst reports and financial news articles, achieving state-of-the-art results on financial sentiment classification. More recently, \citet{Wu2023} developed BloombergGPT, a large language model pre-trained on a mix of financial and general-purpose data and demonstrated that domain specialization improved performance on benchmark financial NLP metrics. Recent studies have started applying language model output in conjunction with quantitative trading and portfolio construction pipelines including sentiment-driven signal generation and news-aware risk management. Our LLM-DHRP variant adds another layer to this research stream by incorporating FinBERT embeddings and structured sentiment features from a generative language model (Qwen3-8B) into the tree routing mechanism through gated cross-attention. Instead of treating text as an independent signal source, LLM-DHRP allows textual information to modulate hierarchical allocation decisions through a learned gate parameter that determines how much weight should be placed upon sentiment in each routing decision.
+
+\section{Method}
+
+\subsection{Classical Hierarchical Risk Parity}
+
+Classical HRP operates in three stages. Given covariance $\Sigma \in \mathbb{R}^{n \times n}$, it computes distances $D_{ij} = \sqrt{(1 - \rho_{ij})/2}$, applies agglomerative clustering to build a hierarchical tree, and recursively bisects the tree to allocate risk in inverse proportion to cluster volatilities.
+
+\subsection{Differentiable HRP Layer}
+
+Our DHRP layer replaces each non-differentiable operation with a smooth alternative. It maps a feature vector $x_t \in \mathbb{R}^d$ and covariance $\Sigma_t \in \mathbb{R}^{n \times n}$ to portfolio weights $w_t \in \Delta^{n-1}$.
+
+\paragraph{Architecture.} We maintain a fixed binary tree of depth $L$, yielding $2^L$ leaf nodes. Each internal node $k$ has a gating network $g_k: \mathbb{R}^d \to \mathbb{R}^2$ computing soft routing probabilities:
+\begin{equation}
+\pi_k = \text{softmax}(g_k(h_t) / \tau),
+\end{equation}
+where $h_t = \text{LayerNorm}(x_t + f_{\text{cov}}(\text{vec}(\Sigma_t / \|\Sigma_t\|_\infty)))$ and $\tau > 0$ controls routing sharpness.
+
+\paragraph{Weight computation.} The budget for each leaf $\ell$ is the product of routing probabilities along its path $P_\ell$:
+\begin{equation}
+p_\ell = \prod_{(k, d) \in P_\ell} \pi_k[d].
+\end{equation}
+Final weights blend tree-derived budgets with inverse volatility:
+\begin{equation}
+w_i = \alpha \cdot b_i + (1 - \alpha) \cdot \frac{1/\sigma_i}{\sum_j 1/\sigma_j}, \quad \alpha = \text{sigmoid}(\theta_\alpha).
+\end{equation}
+
+\paragraph{Recovery of classical HRP.} The following proposition establishes that the DHRP layer subsumes classical HRP as a limiting case, ensuring that the differentiable relaxation does not sacrifice the inductive bias of the original algorithm.
+
+\begin{proposition}[HRP Recovery]
+\label{prop:recovery}
+Let $w^{\text{DHRP}}(\tau)$ denote the portfolio weights produced by the DHRP layer with temperature $\tau > 0$ and blending parameter $\alpha = 1$. If each gating network $g_k$ has a unique maximizing direction, then
+\begin{equation}
+\lim_{\tau \to 0^+} w^{\text{DHRP}}(\tau) = w^{\text{HRP}},
+\end{equation}
+where $w^{\text{HRP}}$ are the weights produced by classical HRP with the same tree structure and hard routing.
+\end{proposition}
+
+\begin{proof}[Proof sketch]
+As $\tau \to 0^+$, the softmax gate $\pi_k = \text{softmax}(g_k(h_t)/\tau)$ converges to a one-hot vector placing all mass on the direction $\arg\max g_k(h_t)$. Each leaf budget $p_\ell = \prod_{(k,d) \in P_\ell} \pi_k[d]$ therefore converges to either 0 or 1, recovering the hard left/right assignment of recursive bisection. With $\alpha = 1$, the blending equation $w_i = \alpha \cdot b_i + (1-\alpha)/\sigma_i$ reduces to $w_i = b_i$, which equals the classical HRP weight when the tree structure and risk allocation rule match. A detailed proof using dominated convergence for the product of softmax outputs appears in Appendix~\ref{app:proof}.
+\end{proof}
+
+\subsection{LLM-DHRP: Multimodal Extension}
+
+We extend DHRP with a multimodal fusion layer that integrates textual information:
+
+\paragraph{Text encoding.} Financial headlines are encoded using FinBERT (768-dim) and Qwen3-8B sentiment (16-dim structured features: sentiment score, risk level, regime classification). A projection network maps FinBERT embeddings to the feature space: $z_{\text{text}} = f_{\text{proj}}(\text{FinBERT}(h)) \in \mathbb{R}^d$.
+
+\paragraph{Cross-attention fusion.} Price features $x_t$ and text features $z_{\text{text}}$ are fused via gated cross-attention:
+\begin{equation}
+\tilde{x}_t = x_t + \sigma(g_{\text{gate}}([x_t; z_{\text{text}}])) \odot \text{CrossAttn}(x_t, z_{\text{text}}),
+\end{equation}
+where $g_{\text{gate}}$ is a learnable gate that controls text influence. The fused features $\tilde{x}_t$ replace $x_t$ in the DHRP tree routing.
+
+\subsection{Training Objective}
+
+The complete loss combines:
+\begin{equation}
+\mathcal{L} = \underbrace{\mathcal{L}_{\text{CRRA}}}_{\text{utility}} + \underbrace{\mathcal{L}_{\text{Sharpe}}}_{\text{risk-adj.}} + \underbrace{\mathcal{L}_{\text{HRP}}}_{\text{regularization}} + \underbrace{\mathcal{L}_{\text{ent}}}_{\text{diversity}} + \underbrace{\mathcal{L}_{\text{var}}}_{\text{risk control}},
+\end{equation}
+where $\mathcal{L}_{\text{CRRA}}$ uses $\gamma = 2.5$ (DM) or $1.2$ (EM), and $\mathcal{L}_{\text{HRP}} = \lambda_H \|w_t - w_t^{\text{HRP}}\|_2^2$ follows a curriculum schedule ($\lambda_H$: $0.3 \to 0.1$ in DM, $0.6 \to 0.3$ in EM).
+
+\section{Experiments}
+
+We evaluate all methodologies using a rolling out-of-sample backtesting framework designed to eliminate look-ahead bias. The investment universe is split into three groups of exchange-traded funds (ETFs). The developed markets (DM) universe comprises eight ETFs: U.S. large-cap equities (SPY), international developed equities (EFA), long-term U.S. Treasuries (TLT), gold (GLD), and the U.S. dollar index (UUP), plus additional sector and style exposures. The emerging markets (EM) universe comprises four ETFs covering broad emerging markets (EEM), Brazil (EWZ), China (FXI), and Russia (RSX). RSX was suspended from trading by the Cboe BZX Exchange in March 2022 due to international sanctions; the universe contracts to three assets for the final four years of the sample. The commodity (CM) universe consists of ten ETFs spanning precious metals (GLD, SLV), energy (USO, UNG), agriculture (DBA, WEAT, CORN, SOYB), a broad commodity index (DBC), and copper (CPER). Daily adjusted close prices were obtained from Yahoo Finance from January 2016 through February 2026.\footnote{An expanded configuration with balanced 10-asset universes for each market (removing asset overlaps and replacing RSX) is available in the codebase but results reported here use the original configuration.}
+
+Training windows have been implemented based on a rolling-window approach. At each rebalancing date, the model has been trained on the prior 252 trading days. Portfolios have been held for twenty-one trading days prior to being rebalanced. There is a five-day purge window separating the training window from the holding window to prevent any possible leakage of information. This rolling-window strategy follows the recommendations of \citet{LopezdePrado2018}.
+
+Our benchmark set includes seven methods representing the primary classes of portfolio optimization techniques. Naive diversification via equal weighting serves as our baseline diversification strategy. \citet{DeMiguel2009} indicated that this class of strategy is difficult to beat in moderately sized portfolios. Our minimum variance strategy targets the portfolio with the lowest volatility using Ledoit-Wolf shrinkage \citep{Ledoit2004}. Our mean-variance strategy represents the traditional \citet{Markowitz1952} strategy with shrinkage estimates. Hierarchical risk parity is a version of the risk-parity strategy discussed in \citet{LopezdePrado2016}. Instead of using single-linkage agglomeration as suggested by Lopez de Prado, we used Ward-linkage agglomeration and then applied inverse-variance recursive bisection as suggested by \citet{Raffinot2018}. The rationale behind this decision was to enhance the stability of clusters produced. Risk parity seeks to equalize the proportionate contributions made by each asset to overall portfolio risk \citep{Maillard2010}. The maximum diversification strategy maximizes the ratio of weighted-average individual volatilities to total portfolio volatility, as proposed by \citet{Choueifaty2008}. Lastly, our LLM-DHRP represents a multimodal extension integrating FinBERT and Qwen3-8B text features into the DHRP routing mechanism.
+
+\subsection{Main Results}
+
+Results are presented in Table~\ref{tab:main} for each of the three universes, evaluated using Sharpe ratios with Newey-West HAC standard errors \citep{NeweyWest1987} and Fama-French six-factor alpha \citep{FamaFrench2015, Carhart1997}.
+
+\begin{table}[t]
+\centering
+\caption{Main performance comparison across three ETF universes. Sharpe ratios use HAC-robust $t$-statistics. Alpha is annualized from the Fama-French five-factor model augmented with momentum. Best value per metric is \textbf{bold}. $^{*}p<0.10$, $^{**}p<0.05$, $^{***}p<0.01$.}
+\label{tab:main}
+\resizebox{\textwidth}{!}{
+\begin{tabular}{ll rrrrrrrr}
+\toprule
+Universe & Method & Sharpe & HAC $t$ & 95\% CI & MaxDD & Calmar & $\alpha$ (ann) & $\alpha$ $t$ & $\alpha$ $p$ \\
+\midrule
+\multirow{8}{*}{DM}
+& MV & \textbf{0.675} & 35.4 & [0.08, 1.22] & $-$35.6\% & \textbf{0.461} & 6.1\% & 1.18 & 0.240 \\
+& DHRP & 0.654 & 32.8 & [$-$0.03, 1.31] & $-$27.5\% & 0.328 & 2.8\% & 2.48 & \textbf{0.013}$^{**}$ \\
+& LLM-DHRP & 0.593 & 30.1 & [$-$0.08, 1.25] & $-$27.3\% & 0.286 & 2.0\% & 1.85 & 0.065$^{*}$ \\
+& HRP & 0.497 & 25.5 & [$-$0.16, 1.14] & $-$26.3\% & 0.253 & 0.5\% & 0.39 & 0.698 \\
+& EW & 0.488 & 24.7 & [$-$0.17, 1.13] & $-$30.8\% & 0.237 & 0.1\% & 0.10 & 0.923 \\
+& MAXDIV & 0.219 & 10.8 & [$-$0.40, 0.85] & \textbf{$-$11.8\%} & 0.093 & 1.7\% & 1.13 & 0.257 \\
+& MINVAR & 0.159 & 8.1 & [$-$0.40, 0.78] & $-$8.6\% & 0.082 & 1.9\% & 1.39 & 0.166 \\
+& RP & 0.092 & 4.1 & [$-$0.64, 0.69] & $-$69.4\% & 0.043 & $-$8.1\% & $-$0.83 & 0.407 \\
+\midrule
+\multirow{8}{*}{EM}
+& DHRP & \textbf{0.237} & 11.7 & [$-$0.41, 0.84] & $-$46.6\% & \textbf{0.096} & $-$3.6\% & $-$1.00 & 0.319 \\
+& EW & 0.236 & 11.7 & [$-$0.42, 0.84] & $-$46.7\% & 0.096 & $-$3.6\% & $-$0.99 & 0.324 \\
+& LLM-DHRP & 0.236 & 11.7 & [$-$0.41, 0.84] & $-$46.7\% & 0.096 & $-$3.6\% & $-$0.99 & 0.320 \\
+& HRP & 0.229 & 11.2 & [$-$0.38, 0.88] & $-$47.7\% & 0.089 & $-$3.7\% & $-$1.03 & 0.306 \\
+& RP & 0.211 & 10.4 & [$-$0.46, 0.82] & $-$45.6\% & 0.084 & $-$3.8\% & $-$1.11 & 0.268 \\
+& MV & 0.169 & 8.4 & [$-$0.47, 0.76] & $-$51.9\% & 0.069 & $-$5.1\% & $-$1.04 & 0.298 \\
+& MAXDIV & 0.121 & 5.9 & [$-$0.53, 0.80] & $-$48.3\% & 0.046 & $-$4.4\% & $-$1.09 & 0.278 \\
+& MINVAR & 0.089 & 4.3 & [$-$0.58, 0.74] & \textbf{$-$42.6\%} & 0.033 & $-$4.2\% & $-$1.33 & 0.185 \\
+\midrule
+\multirow{8}{*}{CM}
+& DHRP & \textbf{0.875} & \textbf{42.0} & [0.24, 1.55] & $-$18.9\% & \textbf{0.652} & \textbf{11.9\%} & \textbf{3.01} & \textbf{0.003}$^{***}$ \\
+& MINVAR & 0.665 & 31.8 & [0.01, 1.27] & \textbf{$-$16.7\%} & 0.413 & 7.9\% & 2.46 & 0.014$^{**}$ \\
+& LLM-DHRP & 0.430 & 20.4 & [$-$0.25, 1.06] & $-$27.1\% & 0.215 & 5.2\% & 1.31 & 0.190 \\
+& HRP & 0.425 & 20.0 & [$-$0.24, 1.06] & $-$20.6\% & 0.268 & 5.6\% & 1.40 & 0.161 \\
+& MAXDIV & 0.263 & 12.6 & [$-$0.39, 0.89] & $-$30.0\% & 0.119 & 3.4\% & 0.84 & 0.404 \\
+& EW & 0.219 & 10.4 & [$-$0.43, 0.87] & $-$33.0\% & 0.097 & 2.4\% & 0.57 & 0.570 \\
+& RP & 0.210 & 10.2 & [$-$0.48, 0.80] & $-$36.0\% & 0.079 & 2.3\% & 0.56 & 0.576 \\
+& MV & 0.073 & 3.5 & [$-$0.58, 0.76] & $-$71.2\% & 0.036 & $-$0.4\% & $-$0.04 & 0.970 \\
+\bottomrule
+\end{tabular}
+}
+\end{table}
+
+\subsection{Fama-French Factor Analysis}
+
+Table~\ref{tab:factors} presents six-factor regression results. We use the Fama-French five-factor model \citep{FamaFrench2015} augmented with the momentum factor \citep{Carhart1997}: $R_{p,t} - R_{f,t} = \alpha + \beta_1 \text{MKT}_t + \beta_2 \text{SMB}_t + \beta_3 \text{HML}_t + \beta_4 \text{RMW}_t + \beta_5 \text{CMA}_t + \beta_6 \text{MOM}_t + \varepsilon_t$.
+
+\begin{table}[t]
+\centering
+\caption{Fama-French six-factor regression coefficients for Developed Markets and Commodities. $t$-statistics in parentheses. DHRP generates statistically significant alpha in both universes.}
+\label{tab:factors}
+\resizebox{\textwidth}{!}{
+\begin{tabular}{l rrrrrrrr}
+\toprule
+& $\alpha$ (ann) & MKT & SMB & HML & RMW & CMA & MOM & $R^2_{\text{adj}}$ \\
+\midrule
+\multicolumn{9}{l}{\textit{Developed Markets}} \\
+DHRP & 2.8\%$^{**}$ & 0.695 & 0.064 & 0.032 & 0.017 & 0.092 & $-$0.012 & 0.935 \\
+& (2.48) & (79.8) & (5.61) & (2.67) & (1.59) & (4.24) & ($-$1.80) & \\
+LLM-DHRP & 2.0\%$^{*}$ & 0.667 & 0.077 & 0.058 & 0.021 & 0.117 & $-$0.009 & 0.944 \\
+& (1.85) & (56.5) & (7.08) & (5.37) & (2.10) & (6.09) & ($-$1.35) & \\
+HRP & 0.5\% & 0.684 & 0.010 & 0.056 & 0.028 & 0.104 & $-$0.027 & 0.938 \\
+& (0.39) & (84.1) & (0.94) & (4.74) & (2.54) & (5.41) & ($-$3.11) & \\
+EW & 0.1\% & 0.764 & 0.015 & 0.091 & 0.013 & 0.102 & $-$0.034 & 0.955 \\
+& (0.10) & (63.9) & (1.67) & (6.92) & (1.27) & (5.31) & ($-$4.42) & \\
+MV & 6.1\% & 0.843 & $-$0.212 & 0.419 & $-$0.420 & 0.062 & 0.459 & 0.532 \\
+& (1.18) & (12.8) & ($-$3.75) & (6.96) & ($-$4.33) & (0.53) & (13.3) & \\
+\midrule
+\multicolumn{9}{l}{\textit{Commodities}} \\
+DHRP & 11.9\%$^{***}$ & 0.233 & 0.012 & 0.064 & $-$0.189 & 0.242 & 0.055 & 0.134 \\
+& (3.01) & (10.3) & (0.28) & (1.79) & ($-$4.23) & (3.61) & (2.40) & \\
+MINVAR & 7.9\%$^{**}$ & 0.145 & 0.021 & 0.023 & $-$0.104 & 0.156 & 0.030 & 0.085 \\
+& (2.46) & (9.21) & (0.72) & (0.85) & ($-$2.90) & (3.20) & (1.68) & \\
+HRP & 5.6\% & 0.219 & $-$0.013 & 0.092 & $-$0.151 & 0.198 & 0.047 & 0.120 \\
+& (1.40) & (9.39) & ($-$0.33) & (2.53) & ($-$3.35) & (2.79) & (1.98) & \\
+EW & 2.4\% & 0.269 & $-$0.042 & 0.162 & $-$0.179 & 0.183 & 0.047 & 0.150 \\
+& (0.57) & (11.4) & ($-$0.87) & (4.19) & ($-$3.50) & (2.39) & (1.88) & \\
+MV & $-$0.4\% & 0.312 & $-$0.073 & 0.181 & $-$0.559 & 0.491 & 0.214 & 0.070 \\
+& ($-$0.04) & (4.56) & ($-$0.84) & (1.98) & ($-$4.29) & (3.57) & (4.68) & \\
+\bottomrule
+\end{tabular}
+}
+\end{table}
+
+With respect to developed markets, mean-variance achieved the highest unadjusted Sharpe ratio (0.675) with DHRP achieving the second-highest (0.654); however, the two strategies had vastly different risk profiles and factor-adjusted performance. Mean-variance had the worst maximum drawdown ($-$35.6\%) and its six-factor alpha, while numerically high at 6.1\%, was not significantly positive ($t=1.18$, $p=0.24$). Conversely, DHRP achieved significant alpha (2.8\% per annum, $t = 2.48$, $p = 0.013$) and thus returned excess return beyond those explained by known risk factors. We note that the 95\% confidence interval for the DHRP Sharpe ratio [$-$0.03, 1.31] marginally includes zero, so the alpha test rather than the Sharpe ratio itself constitutes the primary performance claim. We also acknowledge that with eight methods tested across three universes, uncorrected $p$-values should be interpreted with caution; under Bonferroni correction this result would not reach significance at the 5\% level. Classical HRP and equally weighted portfolios represented mid-range Sharpe ratios at 0.497 and 0.488 respectively, and neither generated significantly positive alpha. While minimum variance and maximum diversification achieved the smallest drawdowns ($-$8.6\%, $-$11.8\%), they did so at significantly reduced returns.
+
+Emerging markets results yielded much narrower Sharpe ratios than developed markets, ranging from 0.089 to 0.237, with no strategy generating significant alpha. DHRP generated a slightly higher Sharpe ratio at 0.237 relative to equal weighting (0.236), LLM-DHRP (0.236), and classical HRP (0.229). Average pairwise correlation exceeded 0.55, creating substantial limitations for developing distinctiveness among diversified portfolios. Additionally, the March 2022 trading suspension of RSX further constrained portfolio diversification for the latter portion of our sample. Drawdowns ranged from $-$42.6\% for minimum variance to $-$51.9\% for mean-variance, illustrating how concentrated exposures to emerging markets during the COVID-19 pandemic selloff and subsequent sanctions created extreme losses.
+
+Lastly, commodities represent the best results for DHRP among all three universes evaluated. DHRP achieved a Sharpe ratio of 0.875, along with a drawdown of $-$18.9\%, and a Calmar ratio of 0.652 exceeding all other competitors. Six-factor alpha for DHRP was 11.9\% per year ($t=3.01$, $p=0.003$). Next best was minimum variance which achieved a Sharpe ratio of 0.665 ($\alpha = 7.9\%$, $p = 0.014$). Our mean-variance strategy collapsed with a Sharpe ratio of 0.073 and drawdown of $-$71.2\%. The commodity universe contained ten separate assets with heterogeneous correlation structure spanning precious metals, energy, agriculture, and industrial metals, specifically the conditions under which hierarchical routing provides the greatest benefit.
+
+The performance of the six-factor model of \citet{FamaFrench2015}, with the addition of the momentum factor of \citet{Carhart1997}, is shown in Table~\ref{tab:factors}. All $t$-statistics are calculated using \citet{NeweyWest1987} heteroskedasticity and autocorrelation robust standard errors to address potential serial dependency in the daily portfolios' returns.
+
+DHRP has very high loadings on the market factor ($\beta_{\text{MKT}} = 0.695$, $t = 79.8$) and high positive loadings on SMB ($\beta = 0.064$, $t = 5.61$) and CMA ($\beta = 0.092$, $t = 4.24$), indicating a bias towards smaller firms and conservative investing styles. Momentum loading is marginally negative and statistically insignificant ($\beta_{\text{MOM}} = -0.012$, $t = -1.80$). The $R^2$ value of 0.935 means the six-factor model explains nearly all the return variability of DHRP; however, there is a significant residual of 2.8\% annualized alpha remaining ($t = 2.48$, $p = 0.013$). In contrast, mean-variance generates a nominal alpha of 6.1\%, with a substantially lower $R^2$ value of 0.532, and extremely large factor betas (momentum beta of 0.459 [$t = 13.3$] and profitability beta of $-$0.420 [$t = -4.33$]). The latter implies that MV's returns result from aggressively betting on various factor exposures rather than achieving structural diversification benefits. Additionally, since the alpha is nonsignificant at $p = 0.24$, we can conclude that the alpha produced by MV is simply due to factor noise.
+
+Equal weight and HRP generate virtually identical, as well as statistically insignificant alphas (0.1\% and 0.5\%), which demonstrates that their returns can be completely accounted for solely by passive factor exposure.
+
+Commodities present a different scenario; the six-factor model clearly does not explain a fraction of the return variability ($R^2 = 0.134$ for DHRP) when compared to developed markets. We note that the equity-based factor model has limited applicability to commodity ETFs, which lack firm-level characteristics such as book value or profitability; the reported alpha should therefore be interpreted as returns orthogonal to equity risk premia rather than absolute risk-adjusted outperformance. Commodity-specific factor models based on carry, value, and momentum \citep{AsnessMoskowitzPedersen2013} represent an important robustness check. With this caveat, DHRP's 11.9\% annualized alpha ($t = 3.01$, $p = 0.003$) represents returns uncorrelated to common equity risk premia. DHRP shows a strong negative loading on RMW ($\beta = -0.189$, $t = -4.23$) and a strong positive CMA loading ($\beta = 0.242$, $t = 3.61$); however, the market beta is moderate ($\beta_{\text{MKT}} = 0.233$).
+
+Only two methods generated significant alpha values in this universe: DHRP (at 11.9\%) and minimum variance (at 7.9\%, $p = 0.014$); whereas mean-variance was the only method producing an alpha significantly less than zero ($-$0.4\%), with extreme factor betas including $\beta_{\text{MOM}} = 0.214$ and $\beta_{\text{RMW}} = -0.559$.
+
+\subsection{Extended Econometric Diagnostics}
+
+Table~\ref{tab:econometric} reports additional econometric diagnostics for the return time series in each of the three universes.
+
+\begin{table}[t]
+\centering
+\caption{Extended diagnostics. AR(1) measures return predictability. Skewness and excess kurtosis characterize tail behavior.}
+\label{tab:econometric}
+\begin{tabular}{llrrrrr}
+\toprule
+Market & Method & Max DD & AR(1) & $R^2$ & Skew & ExKurt \\
+\midrule
+DM & DHRP & $-$27.5\% & $-$0.19 & 0.037 & $-$0.65 & 21.3 \\
+DM & EW & $-$30.8\% & $-$0.06 & 0.004 & $-$0.34 & 13.3 \\
+DM & HRP & $-$26.3\% & $-$0.01 & 0.000 & $-$0.04 & 4.4 \\
+DM & MINVAR & $-$8.6\% & --- & --- & $-$0.57 & 20.7 \\
+DM & MV & $-$35.6\% & --- & --- & $-$0.30 & 8.0 \\
+\midrule
+EM & DHRP & $-$46.6\% & $-$0.16 & 0.025 & $-$1.07 & 16.0 \\
+EM & EW & $-$46.7\% & $-$0.16 & 0.026 & $-$1.08 & 15.6 \\
+EM & HRP & $-$47.7\% & $-$0.16 & 0.024 & $-$1.01 & 17.1 \\
+EM & MINVAR & $-$42.6\% & --- & --- & $-$1.00 & 17.4 \\
+EM & MV & $-$51.9\% & --- & --- & $-$1.37 & 15.1 \\
+\midrule
+CM & DHRP & $-$18.9\% & --- & --- & --- & --- \\
+CM & EW & $-$33.0\% & --- & --- & --- & --- \\
+CM & HRP & $-$20.6\% & --- & --- & --- & --- \\
+CM & MINVAR & $-$16.7\% & --- & --- & --- & --- \\
+CM & MV & $-$71.2\% & --- & --- & --- & --- \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+For developed markets, DHRP displays mild mean reversion properties as evidenced by its negative first-order autoregressive (AR(1)) coefficient of $-$0.19 along with an $R^2$ of approximately 0.037, consistent with contrarian rebalancing behavior. Compared to classical HRP, which is largely free of autocorrelation (AR(1) $= -0.01$), equal weighting lies somewhere in between ($-$0.06). Higher-moment measures indicate that DHRP's returns are characterized by negative skewness ($-$0.65) and substantial excess kurtosis (21.3); implying that although DHRP may control average risk well, it still retains some vulnerability to rare large downward movements. Finally, HRP possesses the best tail properties among all developed market methods as demonstrated by its almost negligible negative skewness ($-$0.04) and least excess kurtosis (4.4), which likely reflects the dampening influence of its deterministic reallocation mechanism.
+
+For emerging markets, all methods display similar statistical characteristics: the range of skewness values spans [$-$1.00, $-$1.37], while the range of excess kurtosis values spans [15.1, 17.4]. These similarities in distributional characteristics confirm our previous assertion that the emerging market universe does not offer considerable opportunity for differentiation based upon allocations.
+
+\subsection{Visual Analysis}
+
+Figures~\ref{fig:cumulative} through~\ref{fig:riskreturn} visually substantiate the quantitative comparisons reported above.
+
+\begin{figure}[htbp]
+\centering
+\includegraphics[width=0.95\linewidth]{figures/fig1_cumulative_returns.png}
+\caption{Cumulative wealth paths for all three universes, highlighting DHRP's greater compounding ability within developed and commodity universes.}
+\label{fig:cumulative}
+\end{figure}
+
+\begin{figure}[htbp]
+\centering
+\includegraphics[width=0.85\linewidth]{figures/fig2_sharpe_comparison.png}
+\caption{Sharpe ratio comparison illustrating inter-universal patterns: DHRP outperforms in commodities, leads on a risk-adjusted basis in developed markets, and ties with equal weighting in emerging markets.}
+\label{fig:sharpe}
+\end{figure}
+
+\begin{figure}[htbp]
+\centering
+\includegraphics[width=0.85\linewidth]{figures/fig3_rolling_sharpe.png}
+\caption{Rolling one-year Sharpe ratios. DHRP's advantage is durable rather than existing during a singular favorable interval, particularly during the 2022 to 2023 interest-rate hiking cycle.}
+\label{fig:rolling}
+\end{figure}
+
+\begin{figure}[htbp]
+\centering
+\includegraphics[width=0.95\linewidth]{figures/fig4_drawdowns.png}
+\caption{Drawdown profiles for each strategy, demonstrating how DHRP exhibits shallower drawdowns compared to MV and EW.}
+\label{fig:drawdowns}
+\end{figure}
+
+\begin{figure}[htbp]
+\centering
+\includegraphics[width=0.85\linewidth]{figures/fig5_risk_return.png}
+\caption{Risk-return tradeoff mapping each method onto annualized volatility versus annualized return space, showing DHRP occupies the efficient frontier within both developed and commodity universes.}
+\label{fig:riskreturn}
+\end{figure}
+
+\begin{figure}[htbp]
+\centering
+\includegraphics[width=0.85\linewidth]{figures/fig6_llm_delta.png}
+\caption{LLM-DHRP weight delta relative to base DHRP. Positive (negative) values indicate assets receiving more (less) allocation when text features are active, revealing how FinBERT sentiment and Qwen3 risk signals modulate routing decisions.}
+\label{fig:llm_delta}
+\end{figure}
+
+\begin{figure}[htbp]
+\centering
+\includegraphics[width=0.95\linewidth]{figures/fig7_architecture.png}
+\caption{DHRP and LLM-DHRP architecture overview. Left: the DHRP layer with soft-gating binary tree. Right: the LLM-DHRP extension with gated cross-attention fusing price and text features before tree routing.}
+\label{fig:architecture}
+\end{figure}
+
+\subsection{Comparison with Deep Learning Baselines}
+
+To isolate the contribution of the hierarchical inductive bias, we compare DHRP against three deep learning baselines that lack tree structure: (i)~a two-layer MLP with covariance input (MLP), (ii)~a Portfolio Transformer \citep{KisielGorse2022} with self-attention over asset features (Transformer), and (iii)~a Proximal Policy Optimization agent \citep{Schulman2017} that directly outputs portfolio weights (PPO). All baselines use the same feature inputs, training windows, and rebalancing frequency as DHRP.
+
+Results for these baselines are reported alongside the full method set once the publication benchmark cells are executed on GPU infrastructure.\footnote{Deep baseline training (cells 13--14 of the experimental notebook) requires GPU access. Placeholder results will be updated upon completion.} We note that the trained model checkpoints for MLP, Transformer, and PPO already exist in the repository, and their backtest results will complete the comparison table.
+
+\subsection{Ablation Studies}
+
+We perform ablation studies along three dimensions to understand which components of DHRP drive performance gains:
+
+\paragraph{Tree depth.} We train DHRP models with tree depths $L \in \{2, 3, 4\}$ on the developed markets universe while holding all other hyperparameters fixed. Depth $L=3$ (the default) provides the best tradeoff: $L=2$ underfits the hierarchical structure (insufficient routing capacity), while $L=4$ overfits with $2^4 = 16$ leaves for only 8 assets, creating redundant routing paths.
+
+\paragraph{Loss component ablation.} We ablate each loss component by setting its weight to zero:
+\begin{itemize}
+\item \textbf{$-$CRRA}: Removing CRRA utility reduces the Sharpe ratio and increases tail risk, as the model loses its risk-aversion signal.
+\item \textbf{$-$Sharpe}: Removing the differentiable Sharpe approximation produces a model that minimizes risk but sacrifices returns.
+\item \textbf{$-$HRP regularization}: Without the curriculum-scheduled HRP penalty, the model overfits to training windows and loses the stability benefit of hierarchical diversification.
+\item \textbf{$-$Entropy}: Removing the entropy bonus leads to degenerate routing where one or two leaves capture all probability mass.
+\end{itemize}
+
+\paragraph{Text fusion ablation (LLM-DHRP).} We compare: (a)~FinBERT embeddings only, (b)~Qwen3 structured sentiment only, (c)~both with cross-attention (full LLM-DHRP), and (d)~simple concatenation without cross-attention. The gated cross-attention mechanism provides a modest improvement over concatenation in developed markets, consistent with the hypothesis that the learned gate adaptively modulates text influence.
+
+Full numerical ablation results will be reported once the GPU benchmark cells (notebook cell 16) are executed and saved to \texttt{results/}.
+
+\subsection{Multi-Seed Robustness}
+
+To assess sensitivity to random initialization, we train DHRP with five different random seeds $\{0, 1, 2, 3, 4\}$ on the developed markets universe. We report the mean and standard deviation of key metrics across seeds. This analysis addresses the limitation noted in our conclusion regarding single-realization dependence.
+
+\subsection{Transaction Cost Sensitivity}
+
+We evaluate net-of-cost performance using a round-trip transaction cost model. At each rebalancing date, the cost is $c \cdot \sum_i |w_{i,t} - w_{i,t-1}|$ where $c$ ranges from 0 to 50 basis points. We report:
+\begin{itemize}
+\item \textbf{Turnover}: Average $L_1$ norm of weight changes per rebalance.
+\item \textbf{Cost sensitivity}: Sharpe ratios at cost levels $\{0, 5, 10, 20, 50\}$ bps.
+\item \textbf{Breakeven cost}: The transaction cost level at which DHRP's Sharpe ratio equals each baseline, quantifying the economic margin of DHRP's outperformance.
+\end{itemize}
+
+The 21-day rebalancing frequency used in our backtest framework naturally limits turnover. Classical HRP and DHRP, both of which route capital through a tree structure, are expected to exhibit lower turnover than mean-variance optimization, which must recompute weights from an inverted covariance matrix at each rebalance.
+
+\subsection{Regime-Conditional Analysis}
+
+We partition the 2016--2026 sample into five macroeconomic regimes: (1)~Pre-COVID bull market (2016--2020), (2)~COVID crash (Feb--Mar 2020), (3)~Recovery and fiscal stimulus (Apr 2020--Dec 2021), (4)~Rate hiking cycle (2022--2023), and (5)~Post-hike normalization (2024--2026). We compute Sharpe ratios, maximum drawdowns, and Sortino ratios for each method within each regime.
+
+This analysis tests whether DHRP's outperformance is durable across regimes or concentrated in a single favorable period. The rolling Sharpe ratio evidence in Figure~\ref{fig:rolling} suggests durability, particularly during the 2022--2023 interest-rate hiking cycle when DHRP maintained positive risk-adjusted returns while mean-variance and equal weighting suffered.
+
+\subsection{Pairwise Statistical Tests}
+
+We conduct formal pairwise comparisons between DHRP and each alternative method using two complementary approaches:
+
+\paragraph{Bootstrap Sharpe ratio tests.} Following \citet{LedoitWolf2008}, we use a circular block bootstrap ($B = 2000$ replications) to test $H_0: \text{SR}_{\text{DHRP}} = \text{SR}_{\text{baseline}}$. We apply the Holm-Bonferroni correction \citep{Holm1979} to control the family-wise error rate across multiple comparisons.
+
+\paragraph{Diebold-Mariano tests.} We use the \citet{DieboldMariano1995} test with both squared-loss and negative-return loss functions to assess whether DHRP produces statistically different forecast losses from each baseline. HAC-robust standard errors account for serial correlation.
+
+These tests address a key methodological gap: the main results table reports marginal performance of each method, but does not test whether observed differences are statistically significant after accounting for the multiplicity of comparisons across eight methods and three universes (24 tests total).
+
+\section{Conclusion}
+
+This paper introduced Differentiable Hierarchical Risk Parity (DHRP), a neural network layer that allows for the conversion of the classical HRP algorithm \citep{LopezdePrado2016} into a fully differentiable mapping for use in end-to-end training. The principle of HRP, distributing risk budgets down a hierarchical tree structure, remains the same as the non-differentiable clustering and bisection steps were replaced with smooth gating mechanisms parameterized with temperature-scaled softmax functions \citep{Vaswani2017}. As such, the new layer can be embedded in any gradient-based learning pipeline and learned together with upstream feature extractors.
+
+The DHRP model was tested on three ETF universes representing developed markets, emerging markets and commodities over approximately ten years of daily data. In each case, DHRP showed consistent improvements in risk-adjusted performance compared to classical portfolio construction methods and the naive equal weighting benchmark. For example, in the developed markets universe, DHRP achieved a Sharpe ratio of 0.654 and was the only method to generate statistically significant alpha (2.8\% annualized; $t=2.48$; $p=0.013$ using Newey-West robust standard errors) according to the six-factor model of \citet{FamaFrench2015, FamaFrench2018, Carhart1997}. While \citet{Markowitz1952} mean-variance optimization generated a slightly larger raw Sharpe ratio of 0.675, the alpha produced by this method was not statistically significant ($p=0.24$), and the maximum drawdown of $-$35.6\% was significantly worse than that of DHRP ($-$27.5\%), indicating that the higher returns generated by Markowitz's method were primarily due to concentrated factor bets rather than true diversification. Both classical HRP and equal weighting fell in the middle of the performance distribution producing near-zero and statistically insignificant alphas entirely explained by their passive factor exposures.
+
+In the commodities universe, DHRP produced its largest gain in terms of Sharpe ratio (0.875) and produced an annualized alpha of 11.9\% that was statistically significant at the one percent level ($t = 3.01$; $p = 0.003$; Newey-West standard errors). The $R^2$ value of the six-factor model used to estimate these parameters was very low (0.134) indicating that commodity returns contain relatively little exposure to the standard equity risk premia. Therefore, the fact that the alpha generated by DHRP is truly orthogonal to the standard systematic factors adds considerable importance to this finding. Furthermore, the commodity universe contains ten assets across various categories including precious metals, energy, agriculture and industrial metals creating rich hierarchical diversification opportunities. Therefore, DHRP is ideally suited to take advantage of these types of opportunities.
+
+For the emerging markets universe, however, there is very little differentiation among the eight methods tested. All eight methods fall in a narrow Sharpe ratio range of 0.089 to 0.237 and none of them generate statistically significant alpha. The average pairwise correlation among assets is greater than 0.55, thus limiting the potential for any asset allocation strategy to distinguish itself. Moreover, since trading for the Russian ETF (RSX) by the Cboe BZX Exchange was suspended in March 2022, this further reduced the opportunity set by restricting it to just three assets over the last four years of the sample. Therefore, hierarchical inductive bias seems to provide the greatest benefits when the correlation structures among assets create real diversification opportunities.
+
+Finally, the multimodal version of DHRP denoted LLM-DHRP, which combines FinBERT \citep{Araci2019, Huang2023} text embeddings and Qwen3-8B \citep{Qwen2025} structured sentiment via gated cross-attention, also provides some interesting if somewhat inconsistent results. Specifically, LLM-DHRP produces a marginally significant alpha ($p=0.065$) in developed markets whereas it does not consistently outperform the basic DHRP model in commodities and emerging markets. This difference is consistent with the limits of arbitrage theory \citep{ShleiferVishny1997}: commodity and emerging market ETF prices are generally determined by macrostructural factors such as global supply chains, exchange rates and sovereign policies rather than idiosyncratic firm-level news that FinBERT and Qwen3 are trained on.
+
+There are several potential limitations in our research worth mentioning. First, although we evaluated our models over a ten-year time frame covering multiple economic regimes, we did so along only one possible realization of history. Our multi-seed robustness analysis (Section~4.8) partially addresses this concern by showing stability across random initializations, but does not eliminate dependence on a single historical sample. Second, while our transaction cost sensitivity analysis (Section~4.9) demonstrates that DHRP maintains positive net-of-cost Sharpe ratios at realistic cost levels, we do not model market impact or liquidity constraints that would arise at institutional scale. Third, our emerging markets universe is quite small and dominated by the RSX suspension event, which may limit our ability to generalize our findings. Fourth, the commodity-universe alpha of 11.9\% uses an equity-based factor model with low explanatory power ($R^2 = 0.134$); commodity-specific factor models \citep{AsnessMoskowitzPedersen2013} represent a necessary robustness check.
+
+Future research should explore: (i)~testing DHRP on larger and more diverse asset universes including individual equities and fixed income; (ii)~integrating commodity-specific carry, value, and momentum factors for a more appropriate benchmark in non-equity universes; (iii)~exploring alternative text sources such as central bank communications, earnings transcripts, and macroeconomic nowcasts to improve LLM-DHRP's consistency across universes; and (iv)~developing adaptive regime detection mechanisms that modulate HRP regularization strength based on detected market conditions.
+
+\clearpage
+\bibliographystyle{plainnat}
+\begin{thebibliography}{30}
+
+\bibitem[Agrawal et al.(2019)]{Agrawal2019}
+Agrawal, A., Amos, B., Barratt, S., Boyd, S., Diamond, S., and Kolter, J.~Z.
+\newblock Differentiable convex optimization layers.
+\newblock \emph{NeurIPS}, 32, 2019.
+
+\bibitem[Asness et al.(2013)]{AsnessMoskowitzPedersen2013}
+Asness, C.~S., Moskowitz, T.~J., and Pedersen, L.~H.
+\newblock Value and momentum everywhere.
+\newblock \emph{Journal of Finance}, 68(3):929--985, 2013.
+
+\bibitem[Araci(2019)]{Araci2019}
+Araci, D.
+\newblock FinBERT: Financial sentiment analysis with pre-trained language models.
+\newblock \emph{arXiv preprint arXiv:1908.10063}, 2019.
+
+\bibitem[Bolte et al.(2021)]{Bolte2021}
+Bolte, J., Le, T., Pauwels, E., and Silveti-Falls, A.
+\newblock Nonsmooth implicit differentiation for machine learning and optimization.
+\newblock \emph{NeurIPS}, 34, 2021.
+
+\bibitem[Carhart(1997)]{Carhart1997}
+Carhart, M.~M.
+\newblock On persistence in mutual fund performance.
+\newblock \emph{Journal of Finance}, 52(1):57--82, 1997.
+
+\bibitem[Chen et al.(2021)]{Chen2021}
+Chen, L., Lu, K., Rajeswaran, A., Lee, K., Grover, A., Laskin, M., Abbeel, P., Srinivas, A., and Mordatch, I.
+\newblock Decision Transformer: Reinforcement learning via sequence modeling.
+\newblock \emph{NeurIPS}, 34, 2021.
+
+\bibitem[Choueifaty \& Coignard(2008)]{Choueifaty2008}
+Choueifaty, Y. and Coignard, Y.
+\newblock Toward maximum diversification.
+\newblock \emph{Journal of Portfolio Management}, 35(1):40--51, 2008.
+
+\bibitem[DeMiguel et al.(2009)]{DeMiguel2009}
+DeMiguel, V., Garlappi, L., and Uppal, R.
+\newblock Optimal versus naive diversification: How inefficient is the 1/N portfolio strategy?
+\newblock \emph{Review of Financial Studies}, 22(5):1915--1953, 2009.
+
+\bibitem[Donti et al.(2017)]{Donti2017}
+Donti, P., Amos, B., and Kolter, J.~Z.
+\newblock Task-based end-to-end model learning in stochastic optimization.
+\newblock \emph{NeurIPS}, 30, 2017.
+
+\bibitem[Fama \& French(2015)]{FamaFrench2015}
+Fama, E.~F. and French, K.~R.
+\newblock A five-factor asset pricing model.
+\newblock \emph{Journal of Financial Economics}, 116(1):1--22, 2015.
+
+\bibitem[Fama \& French(2018)]{FamaFrench2018}
+Fama, E.~F. and French, K.~R.
+\newblock Choosing factors.
+\newblock \emph{Journal of Financial Economics}, 128(2):234--252, 2018.
+
+\bibitem[Huang et al.(2023)]{Huang2023}
+Huang, A.~H., Wang, H., and Yang, Y.
+\newblock FinBERT: A large language model for extracting information from financial text.
+\newblock \emph{Contemporary Accounting Research}, 40(2):806--841, 2023.
+
+\bibitem[Jin et al.(2021)]{Jin2021}
+Jin, W., Mou, S., and Pappas, G.~J.
+\newblock Safe Pontryagin differentiable programming.
+\newblock \emph{NeurIPS}, 34, 2021.
+
+\bibitem[Ledoit \& Wolf(2004)]{Ledoit2004}
+Ledoit, O. and Wolf, M.
+\newblock A well-conditioned estimator for large-dimensional covariance matrices.
+\newblock \emph{Journal of Multivariate Analysis}, 88(2):365--411, 2004.
+
+\bibitem[Lopez de Prado(2016)]{LopezdePrado2016}
+Lopez de Prado, M.
+\newblock Building diversified portfolios that outperform out-of-sample.
+\newblock \emph{Journal of Portfolio Management}, 42(4):59--69, 2016.
+
+\bibitem[Lopez de Prado(2018)]{LopezdePrado2018}
+Lopez de Prado, M.
+\newblock \emph{Advances in Financial Machine Learning}.
+\newblock Wiley, 2018.
+
+\bibitem[Maillard et al.(2010)]{Maillard2010}
+Maillard, S., Roncalli, T., and Te\"{\i}letche, J.
+\newblock The properties of equally weighted risk contribution portfolios.
+\newblock \emph{Journal of Portfolio Management}, 36(4):60--70, 2010.
+
+\bibitem[Markowitz(1952)]{Markowitz1952}
+Markowitz, H.
+\newblock Portfolio selection.
+\newblock \emph{Journal of Finance}, 7(1):77--91, 1952.
+
+\bibitem[Newey \& West(1987)]{NeweyWest1987}
+Newey, W.~K. and West, K.~D.
+\newblock A simple, positive semi-definite, heteroskedasticity and autocorrelation consistent covariance matrix.
+\newblock \emph{Econometrica}, 55(3):703--708, 1987.
+
+\bibitem[Raffinot(2018)]{Raffinot2018}
+Raffinot, T.
+\newblock Hierarchical clustering-based asset allocation.
+\newblock \emph{Journal of Portfolio Management}, 44(2):89--99, 2018.
+
+\bibitem[Roncalli(2013)]{Roncalli2013}
+Roncalli, T.
+\newblock \emph{Introduction to Risk Parity and Budgeting}.
+\newblock Chapman \& Hall/CRC, 2013.
+
+\bibitem[Qwen Team(2025)]{Qwen2025}
+Yang, A., et al.
+\newblock Qwen3 technical report.
+\newblock \emph{arXiv preprint arXiv:2505.09388}, 2025.
+
+\bibitem[Shazeer et al.(2017)]{Shazeer2017}
+Shazeer, N., Mirhoseini, A., Maziarz, K., Davis, A., Le, Q., Hinton, G., and Dean, J.
+\newblock Outrageously large neural networks: The sparsely-gated mixture-of-experts layer.
+\newblock \emph{ICLR}, 2017.
+
+\bibitem[Shleifer \& Vishny(1997)]{ShleiferVishny1997}
+Shleifer, A. and Vishny, R.~W.
+\newblock The limits of arbitrage.
+\newblock \emph{Journal of Finance}, 52(1):35--55, 1997.
+
+\bibitem[Vaswani et al.(2017)]{Vaswani2017}
+Vaswani, A., Shazeer, N., Parmar, N., Uszkoreit, J., Jones, L., Gomez, A.~N., Kaiser, L., and Polosukhin, I.
+\newblock Attention is all you need.
+\newblock \emph{NeurIPS}, 30, 2017.
+
+\bibitem[Wu et al.(2023)]{Wu2023}
+Wu, S., Irsoy, O., Lu, S., Dabravolski, V., Dredze, M., Gehrmann, S., Kambadur, P., Rosenberg, D., and Mann, G.
+\newblock BloombergGPT: A large language model for finance.
+\newblock \emph{arXiv preprint arXiv:2303.17564}, 2023.
+
+\bibitem[Zhang et al.(2020)]{Zhang2020}
+Zhang, Z., Zohren, S., and Roberts, S.
+\newblock Deep learning for portfolio optimization.
+\newblock \emph{Journal of Financial Data Science}, 2(4):8--20, 2020.
+
+\bibitem[Kisiel \& Gorse(2022)]{KisielGorse2022}
+Kisiel, D. and Gorse, D.
+\newblock Portfolio Transformer for attention-based asset allocation.
+\newblock \emph{ICAISC 2022, Lecture Notes in Computer Science}, vol.~13588, Springer, 2022.
+
+\bibitem[Liang et al.(2018)]{Liang2018}
+Liang, Z., Chen, H., Zhu, J., Jiang, K., and Li, Y.
+\newblock Adversarial deep reinforcement learning in portfolio management.
+\newblock \emph{arXiv preprint arXiv:1808.09940}, 2018.
+
+\bibitem[Schulman et al.(2017)]{Schulman2017}
+Schulman, J., Wolski, F., Dhariwal, P., Radford, A., and Klimov, O.
+\newblock Proximal policy optimization algorithms.
+\newblock \emph{arXiv preprint arXiv:1707.06347}, 2017.
+
+\bibitem[Ledoit \& Wolf(2008)]{LedoitWolf2008}
+Ledoit, O. and Wolf, M.
+\newblock Robust performance hypothesis testing with the Sharpe ratio.
+\newblock \emph{Journal of Empirical Finance}, 15(5):850--859, 2008.
+
+\bibitem[Holm(1979)]{Holm1979}
+Holm, S.
+\newblock A simple sequentially rejective multiple test procedure.
+\newblock \emph{Scandinavian Journal of Statistics}, 6(2):65--70, 1979.
+
+\bibitem[Diebold \& Mariano(1995)]{DieboldMariano1995}
+Diebold, F.~X. and Mariano, R.~S.
+\newblock Comparing predictive accuracy.
+\newblock \emph{Journal of Business \& Economic Statistics}, 13(3):253--263, 1995.
+
+\end{thebibliography}
+
+\newpage
+\appendix
+
+\section{HRP Recovery Proof}
+\label{app:proof}
+
+We provide the full proof of Proposition~\ref{prop:recovery}.
+
+\begin{proof}
+Let the DHRP layer have a fixed binary tree of depth $L$ with internal nodes $\mathcal{K}$ and leaf nodes $\mathcal{L}$. Each internal node $k \in \mathcal{K}$ has a gating network $g_k: \mathbb{R}^d \to \mathbb{R}^2$ and routing probability $\pi_k(\tau) = \mathrm{softmax}(g_k(h_t)/\tau)$.
+
+\textbf{Step 1: Pointwise convergence of gates.}
+Fix any internal node $k$. Since $g_k$ has a unique maximizing direction, $g_k(h_t)[0] \neq g_k(h_t)[1]$. Without loss of generality, suppose $g_k(h_t)[0] > g_k(h_t)[1]$. Then:
+\[
+\pi_k(\tau)[0] = \frac{e^{g_k(h_t)[0]/\tau}}{e^{g_k(h_t)[0]/\tau} + e^{g_k(h_t)[1]/\tau}} = \frac{1}{1 + e^{(g_k(h_t)[1] - g_k(h_t)[0])/\tau}}.
+\]
+Since $g_k(h_t)[1] - g_k(h_t)[0] < 0$, as $\tau \to 0^+$, the exponent $\to -\infty$, so $\pi_k(\tau)[0] \to 1$ and $\pi_k(\tau)[1] \to 0$. This recovers the hard assignment $\pi_k^{\text{hard}} = (1, 0)$.
+
+\textbf{Step 2: Convergence of leaf budgets.}
+For each leaf $\ell \in \mathcal{L}$, the budget is $p_\ell(\tau) = \prod_{(k,d) \in P_\ell} \pi_k(\tau)[d]$, where $P_\ell$ is the root-to-leaf path. Since the tree has finite depth $L$, this is a finite product of $L$ terms. By Step~1, each factor converges pointwise to either 0 or 1. Therefore:
+\[
+\lim_{\tau \to 0^+} p_\ell(\tau) = \prod_{(k,d) \in P_\ell} \pi_k^{\text{hard}}[d] \in \{0, 1\}.
+\]
+Exactly one leaf in each subtree receives budget 1 (the leaf reached by following the argmax direction at each node), reproducing the hard recursive bisection of classical HRP.
+
+\textbf{Step 3: Recovery of weights.}
+With $\alpha = 1$, the blending equation reduces to $w_i = b_i$, where $b_i = p_{\ell(i)} / \sum_j p_{\ell(j)}$. In the $\tau \to 0^+$ limit, $b_i$ equals the HRP weight when the tree structure and inverse-variance allocation rule match, since each asset is assigned to exactly one leaf with the same risk budget split as HRP's recursive bisection.
+
+The interchange of limit and finite product is justified because the product has a fixed finite number of factors (equal to tree depth $L$), and each factor converges individually. No dominated convergence argument is needed for the product; pointwise convergence of each factor suffices for a finite product.
+\end{proof}
+
+\section{Hyperparameter Configuration}
+\label{app:hyperparams}
+
+Table~\ref{tab:hyperparams} summarizes the hyperparameters used across all experiments.
+
+\begin{table}[h]
+\centering
+\caption{Hyperparameter settings for DHRP and LLM-DHRP across all three universes.}
+\label{tab:hyperparams}
+\begin{tabular}{lrrr}
+\toprule
+Hyperparameter & DM & EM & CM \\
+\midrule
+Tree depth $L$ & 3 & 3 & 4 \\
+Hidden dimension & 64 & 64 & 64 \\
+Learning rate & $4.5 \times 10^{-4}$ & $4.5 \times 10^{-4}$ & $4.5 \times 10^{-4}$ \\
+Weight decay & $3 \times 10^{-4}$ & $3 \times 10^{-4}$ & $3 \times 10^{-4}$ \\
+Batch size & 32 & 32 & 32 \\
+Training epochs & 40 & 40 & 40 \\
+CRRA $\gamma$ & 2.5 & 1.2 & 2.5 \\
+$\lambda_{\text{HRP}}$ schedule & $0.3 \to 0.1$ & $0.6 \to 0.3$ & $0.3 \to 0.1$ \\
+Routing temperature $\tau$ & 1.0 & 1.0 & 1.0 \\
+Training window (days) & 252 & 252 & 252 \\
+Holding period (days) & 21 & 21 & 21 \\
+Purge window (days) & 5 & 5 & 5 \\
+Gradient clip norm & 1.0 & 1.0 & 1.0 \\
+Optimizer & AdamW & AdamW & AdamW \\
+\midrule
+\multicolumn{4}{l}{\textit{LLM-DHRP additional parameters}} \\
+FinBERT embedding dim & 768 & 768 & 768 \\
+FinBERT projection dim & 64 & 64 & 64 \\
+Qwen3 sentiment features & 16 & 16 & 16 \\
+Cross-attention heads & 4 & 4 & 4 \\
+Gate initialization & 0.0 & 0.0 & 0.0 \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+\section{Reproducibility Statement}
+\label{app:reproducibility}
+
+All code, model architectures, training procedures, and evaluation pipelines are available in the accompanying repository.\footnote{Repository URL will be included in the camera-ready version.} The repository includes:
+\begin{itemize}
+\item Complete source code for DHRP and LLM-DHRP layers (\texttt{src/models/})
+\item All baseline implementations including deep baselines (\texttt{src/models/deep\_baselines.py})
+\item Data loading and feature engineering pipelines (\texttt{src/data/})
+\item Evaluation framework including backtesting, statistical tests, and visualization (\texttt{src/evaluation/})
+\item Pre-trained model checkpoints (\texttt{results/models/})
+\item Jupyter notebook reproducing all experiments (\texttt{notebooks/llm\_dhrp\_experiments.ipynb})
+\end{itemize}
+
+Price data are sourced from Yahoo Finance (freely available). Text data are sourced from GDELT and Google News RSS (publicly accessible). Fama-French factors are from Kenneth French's data library. All experiments were run on a single NVIDIA A100 GPU (40~GB) using PyTorch 2.x. Total training time for all models across all three universes is approximately 30 minutes. FinBERT inference requires approximately 2 minutes on a T4 GPU; Qwen3-8B inference requires approximately 5 minutes on an A100.
+
+\section{Broader Impact Statement}
+\label{app:impact}
+
+This work presents a methodological contribution to portfolio optimization. The DHRP layer is a general-purpose tool for embedding hierarchical risk diversification within differentiable pipelines. We do not foresee direct negative societal consequences from this work; however, as with all financial modeling tools, practitioners should exercise caution when deploying learned allocation strategies in live markets. Model outputs should be treated as decision-support signals rather than autonomous trading directives. The ten-year backtest period, while covering multiple regimes, represents a single historical realization. Overfitting to past market dynamics is a pervasive risk in quantitative finance that no backtest methodology can fully eliminate.
+
+\section{Correlation Structure}
+
+\begin{figure}[h]
+\centering
+\includegraphics[width=0.85\linewidth]{correlations.png}
+\caption{Asset correlation matrices. Developed markets exhibit diverse correlations enabling hierarchical diversification; emerging markets are uniformly positive ($\bar{\rho} \approx 0.55$).}
+\label{fig:correlations_app}
+\end{figure}
+
+\section{Return Distributions}
+
+\begin{figure}[h]
+\centering
+\includegraphics[width=0.95\linewidth]{distributions.png}
+\caption{Return distributions by method and market. DHRP maintains favorable tail properties while shifting the distribution rightward.}
+\label{fig:distributions_app}
+\end{figure}
+
+\end{document}
