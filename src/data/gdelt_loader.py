@@ -9,6 +9,7 @@ Each ticker is cached individually so interrupted runs resume automatically.
 
 import os
 import time
+from concurrent.futures import ThreadPoolExecutor, as_completed
 
 import numpy as np
 import pandas as pd
@@ -195,36 +196,43 @@ def load_gdelt_headlines(tickers, start, end, max_per_ticker=250,
         return df
 
     # Progress header
-    eta_min = len(to_fetch) * est_per_ticker / 60
+    workers = min(8, len(to_fetch))
+    eta_min = len(to_fetch) * est_per_ticker / 60 / workers
     print(f"  GDELT: {n_cached}/{total} tickers cached ({n_cached_headlines} headlines)")
     print(f"  Fetching {len(to_fetch)} tickers "
-          f"({n_chunks} chunks each, ETA ~{eta_min:.0f} min)...")
+          f"({n_chunks} chunks each, {workers} parallel workers, ETA ~{eta_min:.0f} min)...")
 
-    # Fetch uncached tickers
+    # Fetch uncached tickers in parallel
     t0 = time.time()
     fetched_dfs = []
-    for idx, ticker in enumerate(to_fetch, 1):
+    done_count = 0
+
+    def _fetch_and_cache(ticker):
         records = _fetch_ticker_headlines(
             ticker, GDELT_QUERIES[ticker], start_dt, end_dt,
             max_per_ticker, chunk_months, delay,
         )
-
-        # Cache immediately
         ticker_df = pd.DataFrame(records)
         if not ticker_df.empty:
             ticker_df["date"] = pd.to_datetime(ticker_df["date"])
             ticker_df = ticker_df.drop_duplicates(subset=["headline"])
             ticker_df.to_csv(_ticker_cache_path(ticker, start, end), index=False)
-            fetched_dfs.append(ticker_df)
+        return ticker, ticker_df
 
-        # Progress with real ETA based on elapsed time
-        elapsed = time.time() - t0
-        avg_per_ticker = elapsed / idx
-        remaining = len(to_fetch) - idx
-        eta_sec = remaining * avg_per_ticker
-        eta_str = f"{eta_sec / 60:.1f}m" if eta_sec >= 60 else f"{eta_sec:.0f}s"
-        print(f"    [{n_cached + idx}/{total}] {ticker}: "
-              f"{len(records)} headlines | {remaining} left (~{eta_str})")
+    with ThreadPoolExecutor(max_workers=workers) as pool:
+        futures = {pool.submit(_fetch_and_cache, t): t for t in to_fetch}
+        for future in as_completed(futures):
+            done_count += 1
+            ticker, ticker_df = future.result()
+            if not ticker_df.empty:
+                fetched_dfs.append(ticker_df)
+
+            elapsed = time.time() - t0
+            remaining = len(to_fetch) - done_count
+            eta_sec = (elapsed / done_count) * remaining
+            eta_str = f"{eta_sec / 60:.1f}m" if eta_sec >= 60 else f"{eta_sec:.0f}s"
+            print(f"    [{n_cached + done_count}/{total}] {ticker}: "
+                  f"{len(ticker_df)} headlines | {remaining} left (~{eta_str})")
 
     # Combine
     all_dfs = cached_dfs + fetched_dfs
