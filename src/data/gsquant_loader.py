@@ -244,8 +244,123 @@ def make_gs_macro_features(indices_df, fx_df=None, normalize=True):
     return features
 
 
+def load_gs_eod_data(start, end):
+    """Load daily spot, market cap, ADV from GSEOD dataset.
+
+    Provides liquidity and market-breadth features unavailable from TREOD.
+    """
+    os.makedirs(CACHE_DIR, exist_ok=True)
+    cp = os.path.join(CACHE_DIR, f"gs_eod_{start}_{end}.csv")
+    if os.path.exists(cp):
+        df = pd.read_csv(cp, index_col=0, parse_dates=True)
+        print(f"  GS EOD: {df.shape} (cached)")
+        return df
+
+    session = _get_session()
+    if session is None:
+        return pd.DataFrame()
+
+    from gs_quant.api.gs.data import GsDataApi
+
+    asset_ids = _resolve_assets(GS_INDEX_TICKERS, id_type="ticker")
+    if not asset_ids:
+        return pd.DataFrame()
+
+    frames = {}
+    for name, mid in asset_ids.items():
+        try:
+            rows = GsDataApi.query_data(
+                query={
+                    "where": {"assetId": [mid]},
+                    "startDate": str(start),
+                    "endDate": str(end),
+                },
+                dataset_id="GSEOD",
+            )
+            if rows:
+                df = pd.DataFrame(rows)
+                df["date"] = pd.to_datetime(df["date"])
+                df = df.set_index("date").sort_index()
+                # Extract useful columns
+                for col in ["spot", "mdv22Day", "adv"]:
+                    if col in df.columns:
+                        frames[f"{name}_{col}"] = df[col]
+                print(f"    {name} GSEOD: {len(df)} days")
+        except Exception as e:
+            print(f"    {name} GSEOD: {str(e)[:60]}")
+
+    if not frames:
+        return pd.DataFrame()
+
+    combined = pd.DataFrame(frames).sort_index().ffill().bfill()
+    combined.to_csv(cp)
+    print(f"  GS EOD: {combined.shape}")
+    return combined
+
+
+def load_gs_fxvol_data(start, end):
+    """Load FX implied volatility from FXIMPLIEDVOL_STANDARD.
+
+    Provides vol regime features for currency-sensitive universes.
+    Extracts ATM 1m vol for major pairs.
+    """
+    os.makedirs(CACHE_DIR, exist_ok=True)
+    cp = os.path.join(CACHE_DIR, f"gs_fxvol_{start}_{end}.csv")
+    if os.path.exists(cp):
+        df = pd.read_csv(cp, index_col=0, parse_dates=True)
+        print(f"  GS FX Vol: {df.shape} (cached)")
+        return df
+
+    session = _get_session()
+    if session is None:
+        return pd.DataFrame()
+
+    from gs_quant.api.gs.data import GsDataApi
+
+    fx_ids = _resolve_assets(GS_FX_PAIRS, id_type="bbg")
+    if not fx_ids:
+        return pd.DataFrame()
+
+    frames = {}
+    for name, mid in fx_ids.items():
+        try:
+            rows = GsDataApi.query_data(
+                query={
+                    "where": {
+                        "assetId": [mid],
+                        "tenor": ["1m"],
+                        "deltaStrike": ["ATMS"],
+                    },
+                    "startDate": str(start),
+                    "endDate": str(end),
+                },
+                dataset_id="FXIMPLIEDVOL_STANDARD",
+            )
+            if rows:
+                df = pd.DataFrame(rows)
+                df["date"] = pd.to_datetime(df["date"])
+                series = df.set_index("date")["impliedVolatility"].sort_index()
+                series.name = f"{name}_iv_1m"
+                frames[name] = series
+                print(f"    {name} FX IV: {len(series)} days")
+        except Exception as e:
+            print(f"    {name} FX IV: {str(e)[:60]}")
+
+    if not frames:
+        return pd.DataFrame()
+
+    combined = pd.DataFrame(frames).sort_index().ffill().bfill()
+    combined.to_csv(cp)
+    print(f"  GS FX Vol: {combined.shape}")
+    return combined
+
+
 def load_gs_data(start, end):
-    """Load all available GS Quant data and return macro feature DataFrame."""
+    """Load all available GS Quant data and return macro feature DataFrame.
+
+    Pulls from: TREOD (13 indices), FXSPOT (2 pairs), GSEOD (market cap/ADV),
+    FXIMPLIEDVOL (FX vol surface).
+    """
     print("Loading GS Quant data...")
     indices = load_gs_index_data(start, end)
     fx = load_gs_fx_data(start, end)
@@ -254,9 +369,23 @@ def load_gs_data(start, end):
         print("  No GS Quant data available.")
         return pd.DataFrame()
 
-    if not indices.empty:
-        features = make_gs_macro_features(indices, fx)
-        print(f"  GS Quant macro features: {features.shape}")
-        return features
+    features = make_gs_macro_features(indices, fx) if not indices.empty else pd.DataFrame()
 
-    return pd.DataFrame()
+    # Add GSEOD market microstructure features
+    eod = load_gs_eod_data(start, end)
+    if not eod.empty:
+        if not features.empty:
+            features = pd.concat([features, eod], axis=1, join="outer").ffill().bfill()
+        else:
+            features = eod
+
+    # Add FX implied vol
+    fxvol = load_gs_fxvol_data(start, end)
+    if not fxvol.empty:
+        if not features.empty:
+            features = pd.concat([features, fxvol], axis=1, join="outer").ffill().bfill()
+        else:
+            features = fxvol
+
+    print(f"  GS Quant total features: {features.shape}")
+    return features
