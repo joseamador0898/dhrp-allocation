@@ -215,6 +215,20 @@ def load_gdelt_headlines(tickers, start, end, max_per_ticker=500,
     chunks_per_ticker = _count_chunks(start_dt, end_dt, chunk_months)
     est_seconds_per_ticker = chunks_per_ticker * (delay + 1.5)  # delay + ~request time
 
+    # --- Migrate old combined cache to per-ticker files ---
+    old_cache_key = f"gdelt_{start}_{end}_{'_'.join(sorted(tickers)[:5])}"
+    old_cp = os.path.join(CACHE_DIR, f"{old_cache_key}.csv")
+    if os.path.exists(old_cp):
+        print("  Migrating old GDELT cache to per-ticker format...")
+        old_df = pd.read_csv(old_cp, parse_dates=["date"])
+        for ticker in old_df["ticker"].unique():
+            tp = _ticker_cache_path(ticker, start, end)
+            if not os.path.exists(tp):
+                chunk = old_df[old_df["ticker"] == ticker]
+                chunk.to_csv(tp, index=False)
+        os.remove(old_cp)
+        print(f"    Migrated {old_df['ticker'].nunique()} tickers from old cache")
+
     # --- Pass 1: separate cached vs. uncached tickers ---
     cached_dfs = []
     to_fetch = []
