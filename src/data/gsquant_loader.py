@@ -14,6 +14,7 @@ import pandas as pd
 CACHE_DIR = os.path.join(os.path.dirname(__file__), "..", "..", "data", "cache")
 
 # Index tickers to resolve via SecurityMaster (TREOD dataset)
+# All verified accessible with read_product_data + read_financial_data scopes
 GS_INDEX_TICKERS = {
     "spx": "SPX",          # S&P 500
     "vix": "VIX",          # CBOE VIX
@@ -24,6 +25,10 @@ GS_INDEX_TICKERS = {
     "mxea": "MXEA",        # MSCI EAFE
     "bcomtr": "BCOMTR",    # Bloomberg Commodity TR
     "dxy": "DXY",          # Dollar Index
+    "stoxx": "SX5E",       # Euro Stoxx 50
+    "nky": "NKY",          # Nikkei 225
+    "hsi": "HSI",          # Hang Seng Index
+    "shcomp": "SHCOMP",    # Shanghai Composite
 }
 
 # FX pairs to resolve via Bloomberg ID (FXSPOT_STANDARD dataset)

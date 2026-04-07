@@ -28,6 +28,43 @@ FRED_SERIES_EXTENDED = {
     "dollar_index": "DTWEXBGS",      # Trade-Weighted Dollar Index
 }
 
+# Full series — tested and verified accessible (37 series)
+FRED_SERIES_FULL = {
+    **FRED_SERIES_EXTENDED,
+    # Treasury yields (daily)
+    "dgs10": "DGS10",               # 10-Year Treasury yield
+    "dgs2": "DGS2",                 # 2-Year Treasury yield
+    "dgs30": "DGS30",               # 30-Year Treasury yield
+    # Inflation expectations
+    "breakeven_10y": "T10YIE",       # 10Y breakeven inflation
+    "tips_real_10y": "DFII10",       # 10Y TIPS real yield
+    # Fed balance sheet & liquidity
+    "fed_balance": "WALCL",          # Fed total assets (weekly)
+    "reverse_repo": "RRPONTSYD",     # Overnight reverse repo volume (daily)
+    # FX rates (daily)
+    "eurusd": "DEXUSEU",            # EUR/USD
+    "usdjpy": "DEXJPUS",            # USD/JPY
+    "gbpusd": "DEXUSUK",            # GBP/USD
+    # Equity indices (daily)
+    "nasdaq": "NASDAQCOM",           # Nasdaq Composite
+    "sp500": "SP500",                # S&P 500
+    # Financial conditions (weekly/daily)
+    "nfci": "NFCI",                  # Chicago Fed National Financial Conditions
+    # Labor market (weekly/monthly)
+    "jobless_claims": "ICSA",        # Initial jobless claims (weekly)
+    "nonfarm_payroll": "PAYEMS",     # Nonfarm payrolls (monthly)
+    # Real economy (monthly)
+    "industrial_prod": "INDPRO",     # Industrial production index
+    "retail_sales": "RSAFS",         # Retail sales
+    "housing_starts": "HOUST",       # Housing starts
+    # Prices (monthly)
+    "ppi": "PPIACO",                 # PPI all commodities
+    "core_pce": "PCEPILFE",          # Core PCE price index
+    # Money supply
+    "m2": "M2SL",                    # M2 money supply (monthly)
+    "monetary_base": "BOGMBASE",     # Monetary base (biweekly)
+}
+
 # Commodity-specific FRED price series (for Commodities universe)
 FRED_SERIES_COMMODITY = {
     "wti_crude": "DCOILWTICO",       # WTI Crude Oil (daily)

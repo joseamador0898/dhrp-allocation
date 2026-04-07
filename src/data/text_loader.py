@@ -164,12 +164,39 @@ def _match_headline_to_tickers(headline, tickers):
 
 
 def load_all_headlines(tickers, start, end, max_headlines=100, use_rss=True,
-                       use_phrasebank=True, use_fiqa=True):
+                       use_phrasebank=True, use_fiqa=True, use_gdelt=True,
+                       gdelt_max_per_ticker=500, gdelt_chunk_months=3):
     """Load headlines from all available sources and combine.
 
-    Target: 1000+ unique headlines for robust FinBERT embeddings.
+    Target: 5000+ unique dated headlines for robust FinBERT embeddings.
+
+    Sources (in order of historical coverage):
+      1. GDELT DOC 2.0 — 10-year historical coverage, free, no API key
+      2. yfinance — recent per-ticker news
+      3. RSS feeds — current headlines from Reuters, CNBC, MarketWatch
+      4. Financial PhraseBank — static academic dataset (undated)
+      5. FiQA — static financial QA sentiment dataset (undated)
     """
     all_dfs = []
+
+    # GDELT historical headlines (primary source for dated coverage)
+    if use_gdelt:
+        print("  Loading GDELT historical headlines...")
+        try:
+            from src.data.gdelt_loader import load_gdelt_headlines
+            gdelt_df = load_gdelt_headlines(
+                tickers, start, end,
+                max_per_ticker=gdelt_max_per_ticker,
+                chunk_months=gdelt_chunk_months,
+            )
+            if not gdelt_df.empty:
+                # Standardize columns
+                if "tone" in gdelt_df.columns:
+                    gdelt_df = gdelt_df.drop(columns=["tone"])
+                print(f"    GDELT: {len(gdelt_df)} headlines")
+                all_dfs.append(gdelt_df)
+        except Exception as e:
+            print(f"    GDELT failed: {e}")
 
     # Yahoo Finance per-ticker news
     print("  Loading yfinance headlines...")
