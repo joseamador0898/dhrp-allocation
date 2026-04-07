@@ -4,14 +4,11 @@ GDELT (Global Database of Events, Language, and Tone) provides free access
 to news articles worldwide.  We use the GDELT DOC 2.0 API for full-text
 search of financial headlines covering the entire 2016-2026 backtest window.
 
-This is the primary historical text source for LLM-DHRP, providing thousands
-of time-stamped financial headlines that yfinance/RSS feeds cannot cover
-(those return only recent articles).
+Each ticker is cached individually so interrupted runs resume automatically.
 """
 
 import os
 import time
-from datetime import datetime, timedelta
 
 import numpy as np
 import pandas as pd
@@ -19,12 +16,8 @@ import requests
 
 CACHE_DIR = os.path.join(os.path.dirname(__file__), "..", "..", "data", "cache")
 
-# GDELT DOC 2.0 API endpoint (free, no key required)
 GDELT_DOC_API = "https://api.gdeltproject.org/api/v2/doc/doc"
 
-# Search queries per asset class / ticker
-# Tested format: parenthesized groups with sourcelang:eng filter work reliably.
-# Avoid bare double-quoted phrases at the top level (causes JSON parse errors).
 GDELT_QUERIES = {
     # DM universe
     "SPY": '("SP500" OR "stock market" OR "Wall Street") sourcelang:eng',
@@ -63,86 +56,51 @@ GDELT_QUERIES = {
     "MARKET": '("financial markets" OR "stock market" OR "global economy") sourcelang:eng',
 }
 
-# Domains to prioritize (financial news sources)
-FINANCIAL_DOMAINS = {
-    "reuters.com", "bloomberg.com", "cnbc.com", "wsj.com", "ft.com",
-    "marketwatch.com", "finance.yahoo.com", "investing.com", "seekingalpha.com",
-    "barrons.com", "fool.com", "thestreet.com", "benzinga.com", "zacks.com",
-    "kitco.com", "oilprice.com", "mining.com", "agweb.com",
-}
 
-
-def _query_gdelt_doc(query, start_date, end_date, max_records=250, mode="artlist",
-                     retries=3, backoff=2.0):
-    """Query the GDELT DOC 2.0 API for article metadata.
-
-    Args:
-        query: search query string
-        start_date: YYYYMMDDHHMMSS format
-        end_date: YYYYMMDDHHMMSS format
-        max_records: maximum articles to return
-        mode: "artlist" for article list, "timelinevol" for volume
-        retries: number of retry attempts on 429/5xx
-        backoff: base backoff delay in seconds
-    Returns:
-        list of dicts with article metadata
-    """
+def _query_gdelt_doc(query, start_date, end_date, max_records=250):
+    """Query GDELT DOC 2.0 API. Returns list of article dicts."""
     params = {
         "query": query,
-        "mode": mode,
+        "mode": "artlist",
         "startdatetime": start_date,
         "enddatetime": end_date,
         "maxrecords": max_records,
         "format": "json",
         "sort": "datedesc",
     }
-    for attempt in range(retries):
+    for attempt in range(3):
         try:
             resp = requests.get(GDELT_DOC_API, params=params, timeout=30)
             if resp.status_code == 200:
                 text = resp.text.strip()
                 if not text or text[0] != '{':
                     return []
-                data = resp.json()
-                return data.get("articles", [])
+                return resp.json().get("articles", [])
             elif resp.status_code == 429:
-                wait = backoff * (2 ** attempt)
-                time.sleep(wait)
+                time.sleep(2 * (2 ** attempt))
                 continue
             else:
                 return []
         except Exception:
-            if attempt < retries - 1:
-                time.sleep(backoff)
+            if attempt < 2:
+                time.sleep(1)
     return []
 
 
 def _gdelt_date_fmt(dt):
-    """Convert date to GDELT format YYYYMMDDHHMMSS."""
     if isinstance(dt, str):
         dt = pd.Timestamp(dt)
     return dt.strftime("%Y%m%d%H%M%S")
 
 
 def _ticker_cache_path(ticker, start, end):
-    """Return per-ticker cache file path."""
     safe = ticker.replace("/", "_").replace("\\", "_")
     return os.path.join(CACHE_DIR, f"gdelt_{safe}_{start}_{end}.csv")
 
 
-def _count_chunks(start_dt, end_dt, chunk_months):
-    """Count how many time chunks a date range produces."""
-    n = 0
-    cur = start_dt
-    while cur < end_dt:
-        cur = min(cur + pd.DateOffset(months=chunk_months), end_dt)
-        n += 1
-    return n
-
-
 def _fetch_ticker_headlines(ticker, query, start_dt, end_dt, max_per_ticker,
                             chunk_months, delay):
-    """Fetch headlines for a single ticker across all time chunks."""
+    """Fetch headlines for one ticker across time chunks."""
     records = []
     chunk_start = start_dt
     while chunk_start < end_dt:
@@ -160,23 +118,19 @@ def _fetch_ticker_headlines(ticker, query, start_dt, end_dt, max_per_ticker,
             if not title or len(title) < 10:
                 continue
             pub_date = art.get("seendate", "")
-            if pub_date:
-                try:
-                    pub_dt = pd.Timestamp(pub_date[:8])
-                except Exception:
-                    continue
-            else:
+            if not pub_date:
                 continue
-
-            tone = art.get("tone", 0.0)
-            domain = art.get("domain", "")
+            try:
+                pub_dt = pd.Timestamp(pub_date[:8])
+            except Exception:
+                continue
 
             records.append({
                 "ticker": ticker,
                 "date": pub_dt,
                 "headline": title,
-                "source": f"GDELT:{domain}",
-                "tone": float(tone) if tone else 0.0,
+                "source": f"GDELT:{art.get('domain', '')}",
+                "tone": float(art.get("tone", 0.0) or 0.0),
             })
 
         chunk_start = chunk_end
@@ -185,20 +139,19 @@ def _fetch_ticker_headlines(ticker, query, start_dt, end_dt, max_per_ticker,
     return records
 
 
-def load_gdelt_headlines(tickers, start, end, max_per_ticker=500,
-                         chunk_months=6, delay=2.0):
-    """Load historical financial headlines from GDELT for the full backtest period.
+def load_gdelt_headlines(tickers, start, end, max_per_ticker=250,
+                         chunk_months=12, delay=1.0):
+    """Load historical financial headlines from GDELT.
 
-    Queries GDELT DOC 2.0 API in chunks to cover the entire date range.
-    Each ticker is cached individually so interrupted runs resume where
-    they left off.  On subsequent runs, only missing tickers hit the API.
+    Per-ticker caching: each ticker is saved individually so interrupted
+    runs resume where they left off. Fully cached runs return instantly.
 
     Args:
         tickers: list of ticker symbols or dict {name: ticker}
         start: start date string (e.g. "2016-01-01")
         end: end date string (e.g. "2026-04-01")
-        max_per_ticker: max headlines per ticker per chunk
-        chunk_months: months per API query chunk
+        max_per_ticker: max headlines per ticker per chunk (GDELT caps at 250)
+        chunk_months: months per API query chunk (12 = ~10 calls/ticker)
         delay: seconds between API calls (rate limiting)
     Returns:
         DataFrame with columns [ticker, date, headline, source, tone]
@@ -212,24 +165,16 @@ def load_gdelt_headlines(tickers, start, end, max_per_ticker=500,
     end_dt = pd.Timestamp(end)
     all_tickers = [t for t in tickers + ["MARKET"] if t in GDELT_QUERIES]
     total = len(all_tickers)
-    chunks_per_ticker = _count_chunks(start_dt, end_dt, chunk_months)
-    est_seconds_per_ticker = chunks_per_ticker * (delay + 1.5)  # delay + ~request time
 
-    # --- Migrate old combined cache to per-ticker files ---
-    old_cache_key = f"gdelt_{start}_{end}_{'_'.join(sorted(tickers)[:5])}"
-    old_cp = os.path.join(CACHE_DIR, f"{old_cache_key}.csv")
-    if os.path.exists(old_cp):
-        print("  Migrating old GDELT cache to per-ticker format...")
-        old_df = pd.read_csv(old_cp, parse_dates=["date"])
-        for ticker in old_df["ticker"].unique():
-            tp = _ticker_cache_path(ticker, start, end)
-            if not os.path.exists(tp):
-                chunk = old_df[old_df["ticker"] == ticker]
-                chunk.to_csv(tp, index=False)
-        os.remove(old_cp)
-        print(f"    Migrated {old_df['ticker'].nunique()} tickers from old cache")
+    # Count chunks for ETA
+    n_chunks = 0
+    cur = start_dt
+    while cur < end_dt:
+        cur = min(cur + pd.DateOffset(months=chunk_months), end_dt)
+        n_chunks += 1
+    est_per_ticker = n_chunks * (delay + 1.0)
 
-    # --- Pass 1: separate cached vs. uncached tickers ---
+    # Separate cached vs uncached
     cached_dfs = []
     to_fetch = []
     for ticker in all_tickers:
@@ -239,8 +184,8 @@ def load_gdelt_headlines(tickers, start, end, max_per_ticker=500,
         else:
             to_fetch.append(ticker)
 
-    cached_count = total - len(to_fetch)
-    cached_headlines = sum(len(d) for d in cached_dfs)
+    n_cached = total - len(to_fetch)
+    n_cached_headlines = sum(len(d) for d in cached_dfs)
 
     if not to_fetch:
         df = pd.concat(cached_dfs, ignore_index=True) if cached_dfs else pd.DataFrame()
@@ -249,66 +194,51 @@ def load_gdelt_headlines(tickers, start, end, max_per_ticker=500,
         print(f"  GDELT: {len(df)} headlines (all {total} tickers cached)")
         return df
 
-    # --- Progress summary ---
-    est_remaining = len(to_fetch) * est_seconds_per_ticker
-    est_min = est_remaining / 60
-    print(f"  GDELT progress: {cached_count}/{total} tickers cached "
-          f"({cached_headlines} headlines so far)")
-    print(f"  Fetching {len(to_fetch)} remaining tickers "
-          f"(~{chunks_per_ticker} API calls each, "
-          f"ETA ~{est_min:.1f} min)...")
+    # Progress header
+    eta_min = len(to_fetch) * est_per_ticker / 60
+    print(f"  GDELT: {n_cached}/{total} tickers cached ({n_cached_headlines} headlines)")
+    print(f"  Fetching {len(to_fetch)} tickers "
+          f"({n_chunks} chunks each, ETA ~{eta_min:.0f} min)...")
 
-    # --- Pass 2: fetch uncached tickers with progress ---
+    # Fetch uncached tickers
+    t0 = time.time()
     fetched_dfs = []
     for idx, ticker in enumerate(to_fetch, 1):
-        query = GDELT_QUERIES[ticker]
         records = _fetch_ticker_headlines(
-            ticker, query, start_dt, end_dt,
+            ticker, GDELT_QUERIES[ticker], start_dt, end_dt,
             max_per_ticker, chunk_months, delay,
         )
 
-        # Save per-ticker cache immediately (survives interrupts)
+        # Cache immediately
         ticker_df = pd.DataFrame(records)
         if not ticker_df.empty:
             ticker_df["date"] = pd.to_datetime(ticker_df["date"])
             ticker_df = ticker_df.drop_duplicates(subset=["headline"])
-            cp = _ticker_cache_path(ticker, start, end)
-            ticker_df.to_csv(cp, index=False)
+            ticker_df.to_csv(_ticker_cache_path(ticker, start, end), index=False)
             fetched_dfs.append(ticker_df)
 
-        done = cached_count + idx
+        # Progress with real ETA based on elapsed time
+        elapsed = time.time() - t0
+        avg_per_ticker = elapsed / idx
         remaining = len(to_fetch) - idx
-        eta_sec = remaining * est_seconds_per_ticker
-        eta_str = f"{eta_sec / 60:.1f} min" if eta_sec >= 60 else f"{eta_sec:.0f}s"
-        print(f"    [{done}/{total}] {ticker}: "
-              f"{len(records)} headlines | "
-              f"{remaining} tickers left (ETA ~{eta_str})")
+        eta_sec = remaining * avg_per_ticker
+        eta_str = f"{eta_sec / 60:.1f}m" if eta_sec >= 60 else f"{eta_sec:.0f}s"
+        print(f"    [{n_cached + idx}/{total}] {ticker}: "
+              f"{len(records)} headlines | {remaining} left (~{eta_str})")
 
-    # --- Combine all ---
+    # Combine
     all_dfs = cached_dfs + fetched_dfs
     df = pd.concat(all_dfs, ignore_index=True) if all_dfs else pd.DataFrame()
     if not df.empty:
         df = df.drop_duplicates(subset=["headline"]).sort_values("date").reset_index(drop=True)
 
-    print(f"  GDELT total: {len(df)} unique headlines")
+    print(f"  GDELT total: {len(df)} unique headlines "
+          f"({time.time() - t0:.0f}s elapsed)")
     return df
 
 
 def load_gdelt_tone_timeseries(query, start, end, resolution="day"):
-    """Load GDELT tone/volume time series for a search query.
-
-    Uses the timelinevol and timelinetone modes to get aggregate
-    media attention and sentiment over time. Useful as an additional
-    macro feature.
-
-    Args:
-        query: GDELT search query
-        start: start date
-        end: end date
-        resolution: "day" or "month"
-    Returns:
-        DataFrame with columns [date, volume, tone]
-    """
+    """Load GDELT tone/volume time series for a search query."""
     os.makedirs(CACHE_DIR, exist_ok=True)
 
     frames = {}
@@ -334,23 +264,11 @@ def load_gdelt_tone_timeseries(query, start, end, resolution="day"):
 
     if not frames:
         return pd.DataFrame()
-
-    combined = pd.concat(frames.values(), axis=1).ffill().fillna(0)
-    return combined
+    return pd.concat(frames.values(), axis=1).ffill().fillna(0)
 
 
 def make_gdelt_sentiment_features(headlines_df, normalize=True):
-    """Create aggregate GDELT sentiment features per day.
-
-    Aggregates headline tone into daily features: mean tone, tone volatility,
-    article count (media attention), positive/negative ratio.
-
-    Args:
-        headlines_df: DataFrame from load_gdelt_headlines with 'tone' column
-        normalize: whether to z-score normalize
-    Returns:
-        DataFrame with daily sentiment features
-    """
+    """Create aggregate GDELT sentiment features per day."""
     if headlines_df.empty or "tone" not in headlines_df.columns:
         return pd.DataFrame()
 
@@ -367,7 +285,6 @@ def make_gdelt_sentiment_features(headlines_df, normalize=True):
     daily.index = pd.to_datetime(daily.index)
     daily = daily.sort_index()
 
-    # Smoothed features (5-day rolling)
     daily["gdelt_tone_5d"] = daily["gdelt_tone_mean"].rolling(5, min_periods=1).mean()
     daily["gdelt_attention_5d"] = daily["gdelt_article_count"].rolling(5, min_periods=1).mean()
 
