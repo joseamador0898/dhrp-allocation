@@ -1,9 +1,8 @@
 import torch
 
 
-def dhrp_loss(layer, xb, Sb, rb, hrp_w, is_em=False, lam_hrp=0.3,
-              prev_weights=None, lam_turnover=0.0):
-    """Multi-objective loss: CRRA utility + Sharpe + HRP reg + turnover penalty."""
+def dhrp_loss(layer, xb, Sb, rb, hrp_w, is_em=False, lam_hrp=0.3):
+    """Multi-objective loss: CRRA utility + Sharpe + HRP regularization."""
     port_r, wts = [], []
     for t in range(rb.shape[0]):
         w = layer(xb[t], Sb[t])
@@ -34,13 +33,7 @@ def dhrp_loss(layer, xb, Sb, rb, hrp_w, is_em=False, lam_hrp=0.3,
     hhi = (wts ** 2).sum(1).mean()
     concentration_pen = hhi * (0.3 if is_em else 0.1)
 
-    # Turnover penalty: penalize weight changes between consecutive samples
-    turnover_pen = 0.0
-    if lam_turnover > 0 and wts.shape[0] > 1:
-        diffs = (wts[1:] - wts[:-1]).abs().sum(dim=1)
-        turnover_pen = diffs.mean() * lam_turnover
-
-    loss = -(crra + sharpe + entropy) + hrp_reg + risk + concentration_pen + turnover_pen
+    loss = -(crra + sharpe + entropy) + hrp_reg + risk + concentration_pen
     if torch.isnan(loss):
         return torch.tensor(0.0, device=xb.device, requires_grad=True)
     return loss

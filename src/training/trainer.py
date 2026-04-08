@@ -42,9 +42,6 @@ def train_dhrp(prices, device="cpu", is_em=False, volume=None, fdim=DEFAULT_FDIM
     St = torch.from_numpy(S).to(device)
     Rt = torch.from_numpy(R).to(device)
 
-    # Turnover penalty: ramp up over training so early epochs focus on returns
-    lam_turn_max = 0.15 if not is_em else 0.1
-
     best_loss, best_st = float("inf"), None
     for ep in range(epochs):
         perm = torch.randperm(n_samp)
@@ -52,14 +49,13 @@ def train_dhrp(prices, device="cpu", is_em=False, volume=None, fdim=DEFAULT_FDIM
         Hs = H[perm.cpu().numpy()]
         ep_loss, nb = 0.0, 0
         lam = hrp_s - (hrp_s - hrp_e) * (ep / epochs)
-        lam_turn = lam_turn_max * min(ep / (epochs * 0.3), 1.0)
 
         for s in range(0, n_samp, 32):
             e = min(s + 32, n_samp)
             opt.zero_grad()
             loss = dhrp_loss(
                 model, Xs[s:e], Ss[s:e], Rs[s:e], Hs[s:e],
-                is_em=is_em, lam_hrp=lam, lam_turnover=lam_turn,
+                is_em=is_em, lam_hrp=lam,
             )
             if not torch.isnan(loss) and loss.requires_grad:
                 loss.backward()
@@ -211,8 +207,6 @@ def train_llm_dhrp(
     Tt = torch.from_numpy(text_embs).to(device) if text_embs is not None else None
     Mt = torch.from_numpy(macro_feats.astype(np.float32)).to(device) if macro_feats is not None else None
 
-    lam_turn_max = 0.15 if not is_em else 0.1
-
     best_loss, best_st = float("inf"), None
     for ep in range(epochs):
         perm = torch.randperm(n_samp)
@@ -222,7 +216,6 @@ def train_llm_dhrp(
         Ms = Mt[perm] if Mt is not None else None
         ep_loss, nb = 0.0, 0
         lam = hrp_lam_start - (hrp_lam_start - hrp_lam_end) * (ep / epochs) if use_hrp_reg else 0.0
-        lam_turn = lam_turn_max * min(ep / (epochs * 0.3), 1.0)
 
         for s in range(0, n_samp, batch_size):
             e = min(s + batch_size, n_samp)
@@ -231,7 +224,7 @@ def train_llm_dhrp(
                 model, Xs[s:e], Ss[s:e], Rs[s:e], Hs[s:e],
                 text_embs=Ts[s:e] if Ts is not None else None,
                 macro_feats=Ms[s:e] if Ms is not None else None,
-                is_em=is_em, lam_hrp=lam, lam_turnover=lam_turn,
+                is_em=is_em, lam_hrp=lam,
             )
             if not torch.isnan(loss) and loss.requires_grad:
                 loss.backward()
@@ -267,7 +260,7 @@ def train_llm_dhrp_multiseed(prices, seeds=None, **kwargs):
 
 
 def _llm_dhrp_loss(model, xb, Sb, rb, hrp_w, text_embs=None, macro_feats=None,
-                   is_em=False, lam_hrp=0.3, lam_turnover=0.0):
+                   is_em=False, lam_hrp=0.3):
     """Multi-objective loss for LLM-DHRP."""
     port_r, wts = [], []
     for t in range(rb.shape[0]):
@@ -294,12 +287,7 @@ def _llm_dhrp_loss(model, xb, Sb, rb, hrp_w, text_embs=None, macro_feats=None,
     hhi = (wts ** 2).sum(1).mean()
     concentration_pen = hhi * (0.3 if is_em else 0.1)
 
-    turnover_pen = 0.0
-    if lam_turnover > 0 and wts.shape[0] > 1:
-        diffs = (wts[1:] - wts[:-1]).abs().sum(dim=1)
-        turnover_pen = diffs.mean() * lam_turnover
-
-    loss = -(crra + sharpe + entropy) + hrp_reg + risk + concentration_pen + turnover_pen
+    loss = -(crra + sharpe + entropy) + hrp_reg + risk + concentration_pen
     if torch.isnan(loss):
         return torch.tensor(0.0, device=xb.device, requires_grad=True)
     return loss
