@@ -1,4 +1,5 @@
 import numpy as np
+import pandas as pd
 
 from ..models.baselines import hrp_allocation
 
@@ -74,7 +75,8 @@ def make_features(rets, fdim=DEFAULT_FDIM, is_em=False, volume=None):
     return out
 
 
-def build_dataset(prices, window=252, step=5, is_em=False, volume=None, fdim=DEFAULT_FDIM):
+def build_dataset(prices, window=252, step=5, is_em=False, volume=None, fdim=DEFAULT_FDIM,
+                   train_end=None):
     """Build training dataset: features, covariances, forward returns, HRP weights.
 
     Args:
@@ -84,6 +86,7 @@ def build_dataset(prices, window=252, step=5, is_em=False, volume=None, fdim=DEF
         is_em: emerging markets flag
         volume: DataFrame of daily volume (same date index as prices), or None
         fdim: feature dimension
+        train_end: if provided, only use data up to this date for training samples
     Returns:
         (X, S, R, H) tuple of numpy arrays
     """
@@ -91,7 +94,15 @@ def build_dataset(prices, window=252, step=5, is_em=False, volume=None, fdim=DEF
     X, S, R, H = [], [], [], []
     fwd = 3 if is_em else 5
 
-    for t in range(window, len(rets) - fwd, step):
+    # Limit training samples to avoid look-ahead bias
+    max_t = len(rets) - fwd
+    if train_end is not None:
+        end_date = pd.Timestamp(train_end)
+        end_candidates = rets.index[rets.index <= end_date]
+        if len(end_candidates) > 0:
+            max_t = min(max_t, rets.index.get_loc(end_candidates[-1]) + 1)
+
+    for t in range(window, max_t, step):
         w_rets = rets.iloc[t - window : t]
         cov = w_rets.cov().values * 252
         if np.isnan(cov).any() or np.isinf(cov).any():

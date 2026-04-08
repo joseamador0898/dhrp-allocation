@@ -18,10 +18,12 @@ def _set_seed(seed):
         torch.cuda.manual_seed_all(seed)
 
 
-def train_dhrp(prices, device="cpu", is_em=False, volume=None, fdim=DEFAULT_FDIM, seed=42):
+def train_dhrp(prices, device="cpu", is_em=False, volume=None, fdim=DEFAULT_FDIM, seed=42,
+               train_end=None):
     """Train DHRP model on historical price data."""
     _set_seed(seed)
-    X, S, R, H = build_dataset(prices, is_em=is_em, volume=volume, fdim=fdim)
+    X, S, R, H = build_dataset(prices, is_em=is_em, volume=volume, fdim=fdim,
+                                train_end=train_end)
     if X.ndim == 1 or X.shape[0] < 50:
         raise ValueError(f"Insufficient data: {X.shape[0] if X.ndim > 1 else 0}")
     n_samp, fdim_actual, n_assets = X.shape[0], X.shape[1], prices.shape[1]
@@ -40,6 +42,9 @@ def train_dhrp(prices, device="cpu", is_em=False, volume=None, fdim=DEFAULT_FDIM
     St = torch.from_numpy(S).to(device)
     Rt = torch.from_numpy(R).to(device)
 
+    # Turnover penalty: ramp up over training so early epochs focus on returns
+    lam_turn_max = 0.15 if not is_em else 0.1
+
     best_loss, best_st = float("inf"), None
     for ep in range(epochs):
         perm = torch.randperm(n_samp)
@@ -47,13 +52,14 @@ def train_dhrp(prices, device="cpu", is_em=False, volume=None, fdim=DEFAULT_FDIM
         Hs = H[perm.cpu().numpy()]
         ep_loss, nb = 0.0, 0
         lam = hrp_s - (hrp_s - hrp_e) * (ep / epochs)
+        lam_turn = lam_turn_max * min(ep / (epochs * 0.3), 1.0)
 
         for s in range(0, n_samp, 32):
             e = min(s + 32, n_samp)
             opt.zero_grad()
             loss = dhrp_loss(
                 model, Xs[s:e], Ss[s:e], Rs[s:e], Hs[s:e],
-                is_em=is_em, lam_hrp=lam,
+                is_em=is_em, lam_hrp=lam, lam_turnover=lam_turn,
             )
             if not torch.isnan(loss) and loss.requires_grad:
                 loss.backward()
@@ -77,7 +83,7 @@ def train_dhrp(prices, device="cpu", is_em=False, volume=None, fdim=DEFAULT_FDIM
 
 
 def train_dhrp_multiseed(prices, seeds=None, device="cpu", is_em=False,
-                         volume=None, fdim=DEFAULT_FDIM):
+                         volume=None, fdim=DEFAULT_FDIM, train_end=None):
     """Train DHRP models across multiple seeds for robustness analysis.
 
     Returns list of trained models (one per seed).
@@ -88,7 +94,7 @@ def train_dhrp_multiseed(prices, seeds=None, device="cpu", is_em=False,
     for s in seeds:
         print(f"\n--- Seed {s} ---")
         m = train_dhrp(prices, device=device, is_em=is_em, volume=volume,
-                       fdim=fdim, seed=s)
+                       fdim=fdim, seed=s, train_end=train_end)
         models.append(m)
     return models
 
@@ -117,6 +123,7 @@ def train_llm_dhrp(
     volume=None,
     fdim=DEFAULT_FDIM,
     seed=42,
+    train_end=None,
 ):
     """Train LLM-enhanced DHRP model.
 
@@ -137,11 +144,13 @@ def train_llm_dhrp(
         volume: DataFrame of daily volume, or None
         fdim: feature dimension
         seed: random seed for reproducibility
+        train_end: if provided, only use data up to this date for training
     Returns:
         trained LLMDHRPLayer model
     """
     _set_seed(seed)
-    X, S, R, H = build_dataset(prices, is_em=is_em, volume=volume, fdim=fdim)
+    X, S, R, H = build_dataset(prices, is_em=is_em, volume=volume, fdim=fdim,
+                                train_end=train_end)
     if X.ndim == 1 or X.shape[0] < 50:
         raise ValueError(f"Insufficient data: {X.shape[0] if X.ndim > 1 else 0}")
     n_samp, fdim_actual, n_assets = X.shape[0], X.shape[1], prices.shape[1]
@@ -181,7 +190,19 @@ def train_llm_dhrp(
     n_params = sum(p.numel() for p in model.parameters())
     print(f"  [{mkt}] Model params: {n_params:,}")
 
-    opt = optim.AdamW(model.parameters(), lr=lr, weight_decay=weight_decay)
+    # Differential LR: text/fusion params learn slower to avoid corrupting price signals
+    text_param_names = {"text_proj", "fusion", "fusion_proj"}
+    text_params = []
+    other_params = []
+    for name, param in model.named_parameters():
+        if any(tp in name for tp in text_param_names):
+            text_params.append(param)
+        else:
+            other_params.append(param)
+    opt = optim.AdamW([
+        {"params": other_params, "lr": lr},
+        {"params": text_params, "lr": lr * 0.3},  # text learns 3x slower
+    ], weight_decay=weight_decay)
     sched = optim.lr_scheduler.CosineAnnealingLR(opt, T_max=epochs, eta_min=lr / 20)
 
     Xt = torch.from_numpy(X).to(device)
@@ -189,6 +210,8 @@ def train_llm_dhrp(
     Rt = torch.from_numpy(R).to(device)
     Tt = torch.from_numpy(text_embs).to(device) if text_embs is not None else None
     Mt = torch.from_numpy(macro_feats.astype(np.float32)).to(device) if macro_feats is not None else None
+
+    lam_turn_max = 0.15 if not is_em else 0.1
 
     best_loss, best_st = float("inf"), None
     for ep in range(epochs):
@@ -199,6 +222,7 @@ def train_llm_dhrp(
         Ms = Mt[perm] if Mt is not None else None
         ep_loss, nb = 0.0, 0
         lam = hrp_lam_start - (hrp_lam_start - hrp_lam_end) * (ep / epochs) if use_hrp_reg else 0.0
+        lam_turn = lam_turn_max * min(ep / (epochs * 0.3), 1.0)
 
         for s in range(0, n_samp, batch_size):
             e = min(s + batch_size, n_samp)
@@ -207,7 +231,7 @@ def train_llm_dhrp(
                 model, Xs[s:e], Ss[s:e], Rs[s:e], Hs[s:e],
                 text_embs=Ts[s:e] if Ts is not None else None,
                 macro_feats=Ms[s:e] if Ms is not None else None,
-                is_em=is_em, lam_hrp=lam,
+                is_em=is_em, lam_hrp=lam, lam_turnover=lam_turn,
             )
             if not torch.isnan(loss) and loss.requires_grad:
                 loss.backward()
@@ -243,7 +267,7 @@ def train_llm_dhrp_multiseed(prices, seeds=None, **kwargs):
 
 
 def _llm_dhrp_loss(model, xb, Sb, rb, hrp_w, text_embs=None, macro_feats=None,
-                   is_em=False, lam_hrp=0.3):
+                   is_em=False, lam_hrp=0.3, lam_turnover=0.0):
     """Multi-objective loss for LLM-DHRP."""
     port_r, wts = [], []
     for t in range(rb.shape[0]):
@@ -269,7 +293,13 @@ def _llm_dhrp_loss(model, xb, Sb, rb, hrp_w, text_embs=None, macro_feats=None,
     entropy = (-(wts * torch.log(wts + 1e-8)).sum(1).mean() * 0.15) if is_em else 0
     hhi = (wts ** 2).sum(1).mean()
     concentration_pen = hhi * (0.3 if is_em else 0.1)
-    loss = -(crra + sharpe + entropy) + hrp_reg + risk + concentration_pen
+
+    turnover_pen = 0.0
+    if lam_turnover > 0 and wts.shape[0] > 1:
+        diffs = (wts[1:] - wts[:-1]).abs().sum(dim=1)
+        turnover_pen = diffs.mean() * lam_turnover
+
+    loss = -(crra + sharpe + entropy) + hrp_reg + risk + concentration_pen + turnover_pen
     if torch.isnan(loss):
         return torch.tensor(0.0, device=xb.device, requires_grad=True)
     return loss

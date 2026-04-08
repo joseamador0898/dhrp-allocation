@@ -177,7 +177,8 @@ class PPOPortfolioAgent(nn.Module):
 
 
 def train_ppo_agent(prices, device="cpu", is_em=False, volume=None, fdim=64,
-                    epochs=40, lr=3e-4, gamma=0.99, clip_eps=0.2, n_steps=32):
+                    epochs=40, lr=3e-4, gamma=0.99, clip_eps=0.2, n_steps=32,
+                    train_end=None):
     """Train PPO portfolio agent on historical data.
 
     Uses rolling windows of returns as episodes. Reward = risk-adjusted return.
@@ -185,7 +186,8 @@ def train_ppo_agent(prices, device="cpu", is_em=False, volume=None, fdim=64,
     from ..data.feature_engineering import build_dataset, make_features
     import numpy as np
 
-    X, S, R, H = build_dataset(prices, is_em=is_em, volume=volume, fdim=fdim)
+    X, S, R, H = build_dataset(prices, is_em=is_em, volume=volume, fdim=fdim,
+                                train_end=train_end)
     if X.ndim == 1 or X.shape[0] < 50:
         raise ValueError(f"Insufficient data: {X.shape[0] if X.ndim > 1 else 0}")
     n_samp, fdim_actual, n_assets = X.shape[0], X.shape[1], prices.shape[1]
@@ -271,13 +273,14 @@ def train_ppo_agent(prices, device="cpu", is_em=False, volume=None, fdim=64,
 
 
 def train_transformer_policy(prices, device="cpu", is_em=False, volume=None, fdim=64,
-                             epochs=40, lr=3e-4, batch_size=32):
+                             epochs=40, lr=3e-4, batch_size=32, train_end=None):
     """Train Transformer portfolio policy via direct Sharpe optimization."""
     from ..data.feature_engineering import build_dataset
     from ..models.loss_functions import dhrp_loss
     import numpy as np
 
-    X, S, R, H = build_dataset(prices, is_em=is_em, volume=volume, fdim=fdim)
+    X, S, R, H = build_dataset(prices, is_em=is_em, volume=volume, fdim=fdim,
+                                train_end=train_end)
     if X.ndim == 1 or X.shape[0] < 50:
         raise ValueError(f"Insufficient data: {X.shape[0] if X.ndim > 1 else 0}")
     n_samp, fdim_actual, n_assets = X.shape[0], X.shape[1], prices.shape[1]

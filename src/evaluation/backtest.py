@@ -12,7 +12,7 @@ import pandas as pd
 
 from ..models.baselines import (
     equal_weight, min_variance, mean_variance, hrp_allocation,
-    risk_parity, max_diversification,
+    risk_parity, max_diversification, ledoit_wolf_cov,
 )
 from ..training.trainer import dhrp_weights
 
@@ -47,6 +47,7 @@ def rolling_backtest(
     volume=None,
     purge_days=PURGE_DAYS,
     return_weights=False,
+    oos_start=None,
 ):
     """Run rolling-window backtest over all methods.
 
@@ -69,6 +70,8 @@ def rolling_backtest(
         volume: DataFrame of daily volume, or None
         purge_days: gap between train and test windows
         return_weights: if True, also return weight history for turnover analysis
+        oos_start: out-of-sample start date (str or Timestamp). If provided, only
+                   backtest from this date onward (for neural methods trained on prior data).
     Returns:
         DataFrame with columns [method, date, return]
         If return_weights=True, returns (results_df, weights_history)
@@ -94,7 +97,18 @@ def rolling_backtest(
     prev_weights = {}
     rebalance_idx = 0
 
+    # Determine OOS start index
+    oos_idx = train_days
+    if oos_start is not None:
+        oos_date = pd.Timestamp(oos_start)
+        oos_candidates = rets.index[rets.index >= oos_date]
+        if len(oos_candidates) > 0:
+            oos_idx = max(train_days, rets.index.get_loc(oos_candidates[0]))
+
     for t in range(train_days, len(rets), step_days):
+        if t < oos_idx:
+            rebalance_idx += 1
+            continue
         # Apply purge gap: train ends purge_days before test starts
         train_end = t - purge_days if purge_days > 0 else t
         if train_end <= train_days:
@@ -105,7 +119,12 @@ def rolling_backtest(
             rebalance_idx += 1
             continue
         mu = train.mean().values * 252
-        cov = train.cov().values * 252 + np.eye(train.shape[1]) * (0.001 if is_em else 1e-6)
+        # Ledoit-Wolf shrinkage for better-conditioned covariance estimation
+        try:
+            cov = ledoit_wolf_cov(train)
+        except Exception:
+            cov = train.cov().values * 252
+        cov = cov + np.eye(train.shape[1]) * (0.001 if is_em else 1e-6)
         test = rets.iloc[t : t + test_days].fillna(0)
         if test.empty:
             rebalance_idx += 1

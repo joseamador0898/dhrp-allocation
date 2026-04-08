@@ -33,8 +33,9 @@ class TextProjectionNetwork(nn.Module):
 class CrossModalFusion(nn.Module):
     """Cross-attention fusion between price features and text features.
 
-    Uses a gated fusion mechanism: the model learns how much to attend
-    to language signals vs price signals at each timestep.
+    Uses a residual gated mechanism: text provides an additive correction
+    to price features, scaled by a learned gate initialized near zero
+    so the model must earn the right to use text signals.
     """
 
     def __init__(self, feature_dim, n_heads=4, dropout=0.1):
@@ -42,14 +43,15 @@ class CrossModalFusion(nn.Module):
         self.cross_attn = nn.MultiheadAttention(
             feature_dim, n_heads, dropout=dropout, batch_first=True,
         )
-        self.gate = nn.Sequential(
-            nn.Linear(feature_dim * 2, feature_dim),
-            nn.Sigmoid(),
-        )
+        self.gate_proj = nn.Linear(feature_dim * 2, feature_dim)
+        # Initialize gate bias to -2 so sigmoid ≈ 0.12 — text starts small
+        nn.init.zeros_(self.gate_proj.weight)
+        nn.init.constant_(self.gate_proj.bias, -2.0)
         self.norm = nn.LayerNorm(feature_dim)
+        self.text_dropout = nn.Dropout(0.3)
 
     def forward(self, price_feat, text_feat):
-        """Fuse price and text features via gated cross-attention.
+        """Fuse price and text features via residual gated cross-attention.
 
         Args:
             price_feat: (feature_dim,) price feature vector
@@ -57,17 +59,16 @@ class CrossModalFusion(nn.Module):
         Returns:
             (feature_dim,) fused feature vector
         """
-        # Reshape for attention: (1, 1, feature_dim) — single-step
         p = price_feat.unsqueeze(0).unsqueeze(0) if price_feat.dim() == 1 else price_feat.unsqueeze(1)
         t = text_feat.unsqueeze(0).unsqueeze(0) if text_feat.dim() == 1 else text_feat.unsqueeze(1)
 
-        # Cross-attend: price queries, text keys/values
         attn_out, _ = self.cross_attn(p, t, t)
         attn_out = attn_out.squeeze(1).squeeze(0) if price_feat.dim() == 1 else attn_out.squeeze(1)
+        attn_out = self.text_dropout(attn_out)
 
-        # Gated fusion
-        gate_val = self.gate(torch.cat([price_feat, attn_out], dim=-1))
-        fused = gate_val * attn_out + (1 - gate_val) * price_feat
+        # Residual gating: price_feat + gate * attn_correction
+        gate_val = torch.sigmoid(self.gate_proj(torch.cat([price_feat, attn_out], dim=-1)))
+        fused = price_feat + gate_val * (attn_out - price_feat)
         return self.norm(fused)
 
 
@@ -188,17 +189,27 @@ class LLMDHRPLayer(nn.Module):
         return paths
 
     def _fuse_features(self, price_feat, text_emb=None, macro_feat=None):
-        """Fuse price, text, and macro features."""
+        """Fuse price, text, and macro features.
+
+        During training, randomly drops text features (p=0.2) to prevent
+        the model from becoming dependent on text and degrading price signals.
+        """
         feat = price_feat
 
         if self.use_text and text_emb is not None:
-            text_feat = self.text_proj(text_emb)
-            if self.fusion_type == "cross_attention":
-                feat = self.fusion(feat, text_feat)
-            elif self.fusion_type == "concat":
-                feat = self.fusion_proj(torch.cat([feat, text_feat], dim=-1))
-            else:  # additive
-                feat = feat + text_feat
+            # Modality dropout: randomly skip text during training
+            use_text_now = True
+            if self.training and torch.rand(1).item() < 0.2:
+                use_text_now = False
+
+            if use_text_now:
+                text_feat = self.text_proj(text_emb)
+                if self.fusion_type == "cross_attention":
+                    feat = self.fusion(feat, text_feat)
+                elif self.fusion_type == "concat":
+                    feat = self.fusion_proj(torch.cat([feat, text_feat], dim=-1))
+                else:  # additive
+                    feat = feat + 0.1 * text_feat  # scale down additive text
 
         if self.use_macro and macro_feat is not None:
             macro_projected = self.macro_proj(macro_feat)

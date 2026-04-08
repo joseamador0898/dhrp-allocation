@@ -339,6 +339,8 @@ def full_statistical_battery(results, ref="DHRP", rf=0.03, n_boot=1000):
         "sharpe_tests": pairwise_sharpe_tests(results, ref=ref, n_boot=n_boot, rf=rf),
         "dm_tests_squared": pairwise_dm_tests(results, ref=ref, loss_fn="squared"),
         "dm_tests_negative": pairwise_dm_tests(results, ref=ref, loss_fn="negative"),
+        "spa": spa_test(results, benchmark="EW", n_boot=n_boot, rf=rf),
+        "mcs": model_confidence_set(results, alpha=0.05, n_boot=n_boot, rf=rf),
     }
 
 
@@ -500,6 +502,109 @@ def breakeven_cost(results, weights_history, method_a="DHRP", method_b="HRP",
 # ---------------------------------------------------------------------------
 # Computational benchmarks
 # ---------------------------------------------------------------------------
+
+def spa_test(results, benchmark="EW", n_boot=1000, rf=0.03):
+    """Hansen's Superior Predictive Ability (SPA) test.
+
+    Tests H0: no method is significantly better than the benchmark.
+    Returns dict with SPA p-value and best method.
+    """
+    methods = sorted(results["method"].unique())
+    if benchmark not in methods:
+        return {"spa_pvalue": np.nan, "best_method": None}
+    others = [m for m in methods if m != benchmark]
+
+    bench_r = results[results["method"] == benchmark].set_index("date")["return"]
+    d_matrix = []
+    for m in others:
+        m_r = results[results["method"] == m].set_index("date")["return"]
+        merged = pd.concat([m_r.rename("m"), bench_r.rename("b")], axis=1).dropna()
+        d = merged["m"].values - merged["b"].values
+        d_matrix.append(d)
+
+    # Align lengths
+    min_len = min(len(d) for d in d_matrix)
+    d_matrix = np.column_stack([d[:min_len] for d in d_matrix])
+    T = d_matrix.shape[0]
+    d_means = d_matrix.mean(axis=0)
+
+    # Stationary bootstrap
+    np.random.seed(42)
+    max_t_star = np.zeros(n_boot)
+    for b in range(n_boot):
+        idx = np.random.choice(T, T, replace=True)
+        boot_means = d_matrix[idx].mean(axis=0) - d_means
+        boot_stds = d_matrix[idx].std(axis=0) + 1e-12
+        max_t_star[b] = np.max(boot_means / boot_stds * np.sqrt(T))
+
+    # Observed test statistic
+    obs_stds = d_matrix.std(axis=0) + 1e-12
+    obs_t = np.max(d_means / obs_stds * np.sqrt(T))
+    spa_p = np.mean(max_t_star >= obs_t)
+    best_idx = np.argmax(d_means)
+
+    return {
+        "spa_pvalue": spa_p,
+        "best_method": others[best_idx],
+        "best_excess_sharpe": compute_sharpe(
+            results[results["method"] == others[best_idx]]["return"].values, rf
+        ) - compute_sharpe(bench_r.values, rf),
+    }
+
+
+def model_confidence_set(results, alpha=0.05, n_boot=1000, rf=0.03):
+    """Model Confidence Set (Hansen, Lunde, Nason 2011).
+
+    Returns the set of models that cannot be distinguished from the best
+    at significance level alpha.
+    """
+    methods = sorted(results["method"].unique())
+    if len(methods) < 2:
+        return methods
+
+    # Compute loss matrix (negative Sharpe as loss)
+    sharpes = {}
+    for m in methods:
+        r = results[results["method"] == m]["return"].dropna().values
+        sharpes[m] = compute_sharpe(r, rf)
+
+    # Start with all models
+    mcs = list(methods)
+    eliminated = True
+
+    while eliminated and len(mcs) > 1:
+        eliminated = False
+        worst_method = None
+        worst_p = 1.0
+
+        for m in mcs:
+            others_sharpe = np.mean([sharpes[o] for o in mcs if o != m])
+            d = sharpes[m] - others_sharpe
+            if d < 0:
+                # Bootstrap test for elimination
+                m_r = results[results["method"] == m]["return"].dropna().values
+                all_r = {o: results[results["method"] == o]["return"].dropna().values
+                         for o in mcs if o != m}
+                np.random.seed(42)
+                boot_count = 0
+                n = min(len(m_r), min(len(v) for v in all_r.values()))
+                for _ in range(n_boot):
+                    idx = np.random.choice(n, n, replace=True)
+                    boot_m = compute_sharpe(m_r[idx], rf)
+                    boot_others = np.mean([compute_sharpe(v[idx], rf) for v in all_r.values()])
+                    if boot_m - boot_others >= 0:
+                        boot_count += 1
+                p_val = boot_count / n_boot
+                if p_val < worst_p:
+                    worst_p = p_val
+                    worst_method = m
+
+        if worst_method is not None and worst_p < alpha:
+            mcs.remove(worst_method)
+            eliminated = True
+
+    return mcs
+
 
 def benchmark_efficiency(models_dict, n_assets=5, feature_dim=48, n_runs=100):
     """Benchmark inference time and parameter count for each model.
