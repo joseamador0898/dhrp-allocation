@@ -1,0 +1,105 @@
+\appendix
+
+\section{HRP Recovery Proof}
+\label{app:proof}
+
+We provide the full proof of Proposition~\ref{prop:recovery}.
+
+\begin{proof}
+Let the DHRP layer have a fixed binary tree of depth $L$ with internal nodes $\mathcal{K}$ and leaf nodes $\mathcal{L}$. Each internal node $k \in \mathcal{K}$ has a gating network $g_k: \mathbb{R}^d \to \mathbb{R}^2$ and routing probability $\pi_k(\tau) = \mathrm{softmax}(g_k(h_t)/\tau)$.
+
+\textbf{Step 1: Pointwise convergence of gates.}
+Fix any internal node $k$. Since $g_k$ has a unique maximizing direction, $g_k(h_t)[0] \neq g_k(h_t)[1]$. Without loss of generality, suppose $g_k(h_t)[0] > g_k(h_t)[1]$. Then:
+\[
+\pi_k(\tau)[0] = \frac{e^{g_k(h_t)[0]/\tau}}{e^{g_k(h_t)[0]/\tau} + e^{g_k(h_t)[1]/\tau}} = \frac{1}{1 + e^{(g_k(h_t)[1] - g_k(h_t)[0])/\tau}}.
+\]
+Since $g_k(h_t)[1] - g_k(h_t)[0] < 0$, as $\tau \to 0^+$, the exponent $\to -\infty$, so $\pi_k(\tau)[0] \to 1$ and $\pi_k(\tau)[1] \to 0$. This recovers the hard assignment $\pi_k^{\text{hard}} = (1, 0)$.
+
+\textbf{Step 2: Convergence of leaf budgets.}
+For each leaf $\ell \in \mathcal{L}$, the budget is $p_\ell(\tau) = \prod_{(k,d) \in P_\ell} \pi_k(\tau)[d]$, where $P_\ell$ is the root-to-leaf path. Since the tree has finite depth $L$, this is a finite product of $L$ terms. By Step~1, each factor converges pointwise to either 0 or 1. Therefore:
+\[
+\lim_{\tau \to 0^+} p_\ell(\tau) = \prod_{(k,d) \in P_\ell} \pi_k^{\text{hard}}[d] \in \{0, 1\}.
+\]
+Exactly one leaf in each subtree receives budget 1 (the leaf reached by following the argmax direction at each node), reproducing the hard recursive bisection of classical HRP.
+
+\textbf{Step 3: Recovery of weights.}
+With $\alpha = 1$, the blending equation reduces to $w_i = b_i$, where $b_i = p_{\ell(i)} / \sum_j p_{\ell(j)}$. In the $\tau \to 0^+$ limit, $b_i$ equals the HRP weight when the tree structure and inverse-variance allocation rule match, since each asset is assigned to exactly one leaf with the same risk budget split as HRP's recursive bisection.
+
+The interchange of limit and finite product is justified because the product has a fixed finite number of factors (equal to tree depth $L$), and each factor converges individually. No dominated convergence argument is needed for the product; pointwise convergence of each factor suffices for a finite product.
+\end{proof}
+
+\section{Hyperparameter Configuration}
+\label{app:hyperparams}
+
+Table~\ref{tab:hyperparams} summarizes the hyperparameters used across all experiments.
+
+\begin{table}[h]
+\centering
+\caption{Hyperparameter settings for DHRP and the LLM-DHRP$^{\dagger}$ negative ablation across all three universes. The LLM-DHRP$^{\dagger}$ rows are reported for full reproducibility of the negative result analysed in Section~\ref{sec:llmablation}.}
+\label{tab:hyperparams}
+\begin{tabular}{lrrr}
+\toprule
+Hyperparameter & DM & EM & CM \\
+\midrule
+Tree depth $L$ & 3 & 3 & 4 \\
+Hidden dimension & 64 & 64 & 64 \\
+Learning rate & $4.5 \times 10^{-4}$ & $4.5 \times 10^{-4}$ & $4.5 \times 10^{-4}$ \\
+Weight decay & $3 \times 10^{-4}$ & $3 \times 10^{-4}$ & $3 \times 10^{-4}$ \\
+Batch size & 32 & 32 & 32 \\
+Training epochs & 40 & 40 & 40 \\
+CRRA $\gamma$ & 2.5 & 1.2 & 2.5 \\
+$\lambda_{\text{HRP}}$ schedule & $0.3 \to 0.1$ & $0.6 \to 0.3$ & $0.3 \to 0.1$ \\
+Routing temperature $\tau$ & 1.0 & 1.0 & 1.0 \\
+Training window (days) & 252 & 252 & 252 \\
+Holding period (days) & 21 & 21 & 21 \\
+Purge window (days) & 5 & 5 & 5 \\
+Gradient clip norm & 1.0 & 1.0 & 1.0 \\
+Optimizer & AdamW & AdamW & AdamW \\
+\midrule
+\multicolumn{4}{l}{\textit{LLM-DHRP additional parameters}} \\
+FinBERT embedding dim & 768 & 768 & 768 \\
+FinBERT projection dim & 64 & 64 & 64 \\
+Qwen3 sentiment features & 16 & 16 & 16 \\
+Cross-attention heads & 4 & 4 & 4 \\
+Gate initialization & 0.0 & 0.0 & 0.0 \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+\section{Reproducibility Statement}
+\label{app:reproducibility}
+
+All code, model architectures, training procedures, and evaluation pipelines are available in the accompanying repository.\footnote{Repository URL will be included in the camera-ready version.} The repository includes:
+\begin{itemize}
+\item Complete source code for DHRP and LLM-DHRP layers (\texttt{src/models/})
+\item All baseline implementations including deep baselines (\texttt{src/models/deep\_baselines.py})
+\item Data loading and feature engineering pipelines (\texttt{src/data/})
+\item Evaluation framework including backtesting, statistical tests, and visualization (\texttt{src/evaluation/})
+\item Pre-trained model checkpoints (\texttt{results/models/})
+\item Jupyter notebook reproducing all experiments (\texttt{notebooks/llm\_dhrp\_experiments.ipynb})
+\end{itemize}
+
+Price data are sourced from Yahoo Finance (freely available). Text data are sourced from GDELT and Google News RSS (publicly accessible). Fama-French factors are from Kenneth French's data library. All experiments were run on a single NVIDIA A100 GPU (40~GB) using PyTorch 2.x. Total training time for all models across all three universes is approximately 30 minutes. FinBERT inference requires approximately 2 minutes on a T4 GPU; Qwen3-8B inference requires approximately 5 minutes on an A100.
+
+\section{Broader Impact Statement}
+\label{app:impact}
+
+This work presents a methodological contribution to portfolio optimization. The DHRP layer is a general-purpose tool for embedding hierarchical risk diversification within differentiable pipelines. We do not foresee direct negative societal consequences from this work; however, as with all financial modeling tools, practitioners should exercise caution when deploying learned allocation strategies in live markets. Model outputs should be treated as decision-support signals rather than autonomous trading directives. The ten-year backtest period, while covering multiple regimes, represents a single historical realization. Overfitting to past market dynamics is a pervasive risk in quantitative finance that no backtest methodology can fully eliminate.
+
+\section{Correlation Structure}
+
+\begin{figure}[h]
+\centering
+\includegraphics[width=0.85\linewidth]{correlations.png}
+\caption{Asset correlation matrices. Developed markets exhibit diverse correlations enabling hierarchical diversification; emerging markets are uniformly positive ($\bar{\rho} \approx 0.55$).}
+\label{fig:correlations_app}
+\end{figure}
+
+\section{Return Distributions}
+
+\begin{figure}[h]
+\centering
+\includegraphics[width=0.95\linewidth]{distributions.png}
+\caption{Return distributions by method and market. DHRP maintains favorable tail properties while shifting the distribution rightward.}
+\label{fig:distributions_app}
+\end{figure}

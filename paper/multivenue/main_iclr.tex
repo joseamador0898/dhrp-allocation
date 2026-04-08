@@ -1,0 +1,55 @@
+% =====================================================================
+% ICLR 2026 build of "Differentiable Hierarchical Risk Parity"
+%
+% Single-column, 10pt Times, US Letter. Main text 9 pages at
+% submission, 10 pages during rebuttal/camera-ready. Unlimited
+% appendix after the bibliography.
+%
+% Style file: iclr2026_conference.sty + iclr2026_conference.bst
+% (download from https://github.com/ICLR/Master-Template/raw/master/iclr2026.zip
+% and place iclr2026_conference.sty + natbib.sty in this directory).
+%
+% Build:  pdflatex main_iclr ; bibtex main_iclr ; pdflatex *2
+% =====================================================================
+\documentclass{article}
+
+% Anonymous submission style; remove for camera-ready (\iclrfinalcopy)
+\usepackage{iclr2026_conference,times}
+
+% Uncomment for camera-ready / non-anonymous build:
+% \iclrfinalcopy
+
+\usepackage{amsmath, amssymb, amsthm}
+\usepackage{graphicx}
+\usepackage{booktabs}
+\usepackage{hyperref}
+\usepackage{natbib}
+\usepackage{algorithm}
+\usepackage{algorithmic}
+\usepackage{subcaption}
+\usepackage{multirow}
+\usepackage{xcolor}
+\usepackage{microtype}
+\usepackage{url}
+
+\newtheorem{proposition}{Proposition}
+
+\title{Differentiable Hierarchical Risk Parity:\\Learning to Allocate with End-to-End Gradient Optimization}
+
+\author{Jose L. Amador \\
+\texttt{jlaj@connect.ust.hk}}
+
+\iclrfinalcopy  % comment out for anonymous submission
+
+\begin{document}
+\maketitle
+
+\input{body}
+
+\bibliographystyle{iclr2026_conference}
+\input{bibliography}
+
+\appendix
+\input{appendix}
+
+\end{document}

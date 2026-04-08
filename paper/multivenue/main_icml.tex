@@ -1,0 +1,66 @@
+% =====================================================================
+% ICML 2025 build of "Differentiable Hierarchical Risk Parity"
+%
+% Two-column, 10pt Times, US Letter. Main text 8 pages at submission,
+% 9 pages camera-ready. References + appendices unlimited.
+%
+% Style file: icml2025.sty + icml2025.bst (download from
+%   https://media.icml.cc/Conferences/ICML2025/Styles/icml2025.zip
+% and place icml2025.sty in this directory).
+%
+% Build:  pdflatex main_icml ; bibtex main_icml ; pdflatex *2
+% =====================================================================
+\documentclass{article}
+
+% Use [accepted] for camera-ready (shows authors); omit for anonymous submission.
+\usepackage{icml2025}
+
+\usepackage{times}
+\usepackage{amsmath, amssymb, amsthm}
+\usepackage{graphicx}
+\usepackage{booktabs}
+\usepackage{hyperref}
+\usepackage{natbib}
+\usepackage{algorithm}
+\usepackage{algorithmic}
+\usepackage{subcaption}
+\usepackage{multirow}
+\usepackage{xcolor}
+\usepackage{microtype}
+\usepackage{url}
+
+\newtheorem{proposition}{Proposition}
+
+\icmltitlerunning{Differentiable Hierarchical Risk Parity}
+
+\begin{document}
+
+\twocolumn[
+\icmltitle{Differentiable Hierarchical Risk Parity:\\Learning to Allocate with End-to-End Gradient Optimization}
+
+\icmlsetsymbol{equal}{*}
+
+\begin{icmlauthorlist}
+\icmlauthor{Jose L. Amador}{cod}
+\end{icmlauthorlist}
+
+\icmlaffiliation{cod}{Independent Researcher}
+
+\icmlcorrespondingauthor{Jose L. Amador}{jlaj@connect.ust.hk}
+
+\icmlkeywords{portfolio optimization, hierarchical risk parity, differentiable layers, multimodal learning}
+
+\vskip 0.3in
+]
+
+\printAffiliationsAndNotice{}  % leave empty for anonymous
+
+\input{body}
+
+\bibliographystyle{icml2025}
+\input{bibliography}
+
+\onecolumn
+\input{appendix}
+
+\end{document}
