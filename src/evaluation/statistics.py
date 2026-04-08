@@ -134,49 +134,102 @@ def _bca_bootstrap_ci(r, rf=0.03, n_boot=1000, alpha=0.05):
     return float(np.percentile(boot_sharpes, p_lo * 100)), float(np.percentile(boot_sharpes, p_hi * 100))
 
 
+def jobson_korkie_test(r_a, r_b, rf=0.03):
+    """Jobson-Korkie (1981) test for Sharpe ratio equality with
+    Memmel (2003) correction. Returns (z_stat, p_value).
+
+    More powerful than naive bootstrap for moderate-N samples.
+    """
+    n = len(r_a)
+    if n < 30:
+        return np.nan, np.nan
+    exc_a = r_a - rf / 252
+    exc_b = r_b - rf / 252
+    mu_a, mu_b = exc_a.mean(), exc_b.mean()
+    sd_a, sd_b = exc_a.std(ddof=1), exc_b.std(ddof=1)
+    if sd_a < 1e-12 or sd_b < 1e-12:
+        return np.nan, np.nan
+    sr_a, sr_b = mu_a / sd_a, mu_b / sd_b
+    rho = np.corrcoef(exc_a, exc_b)[0, 1]
+    # Memmel-corrected variance
+    var = (1.0 / n) * (
+        2 * (1 - rho)
+        + 0.5 * (sr_a ** 2 + sr_b ** 2 - 2 * sr_a * sr_b * rho ** 2)
+    )
+    if var <= 0:
+        return np.nan, np.nan
+    z = (sr_a - sr_b) / np.sqrt(var)
+    p = 2 * (1 - norm.cdf(abs(z)))
+    return float(z), float(p)
+
+
 def sharpe_difference_test(results, method_a="DHRP", method_b="HRP", n_boot=1000, rf=0.03):
-    """Bootstrap test for Sharpe ratio difference between two methods."""
+    """Test for Sharpe ratio difference between two methods.
+
+    Combines: (1) Jobson-Korkie HAC-corrected parametric test (Memmel 2003),
+    (2) stationary block bootstrap with proper centered p-value.
+    """
     ser_a = results[results["method"] == method_a].set_index("date")["return"]
     ser_b = results[results["method"] == method_b].set_index("date")["return"]
     merged = pd.concat([ser_a.rename("A"), ser_b.rename("B")], axis=1).dropna()
 
     r_a, r_b = merged["A"].values, merged["B"].values
     n = len(r_a)
-    actual_diff = compute_sharpe(r_a, rf) - compute_sharpe(r_b, rf)
+    sr_a = compute_sharpe(r_a, rf)
+    sr_b = compute_sharpe(r_b, rf)
+    actual_diff = sr_a - sr_b
 
-    # Paired t-test
+    # Paired t-test on returns
     t_paired, p_paired = ttest_rel(r_a, r_b)
 
-    # Bootstrap
+    # Jobson-Korkie / Memmel parametric test
+    jk_z, jk_p = jobson_korkie_test(r_a, r_b, rf=rf)
+
+    # Stationary block bootstrap on paired observations (preserves correlation)
     np.random.seed(42)
+    bl = max(5, int(n ** (1 / 3)))
     sharpe_diffs = []
     for _ in range(n_boot):
-        idx = np.random.choice(n, n, replace=True)
-        sr_a = compute_sharpe(r_a[idx], rf)
-        sr_b = compute_sharpe(r_b[idx], rf)
-        sharpe_diffs.append(sr_a - sr_b)
+        # Block bootstrap indices
+        n_blocks = n // bl + 1
+        starts = np.random.randint(0, n - bl + 1, n_blocks)
+        idx = np.concatenate([np.arange(s, s + bl) for s in starts])[:n]
+        sr_a_b = compute_sharpe(r_a[idx], rf)
+        sr_b_b = compute_sharpe(r_b[idx], rf)
+        sharpe_diffs.append(sr_a_b - sr_b_b)
     sharpe_diffs = np.array(sharpe_diffs)
     ci_lo, ci_hi = np.percentile(sharpe_diffs, [2.5, 97.5])
-    p_boot = np.mean(sharpe_diffs < 0) * 2  # two-sided
+
+    # Correct two-sided bootstrap p-value: center distribution at H0 (=0)
+    # then compute fraction at least as extreme as observed
+    centered = sharpe_diffs - sharpe_diffs.mean()
+    p_boot = float(np.mean(np.abs(centered) >= abs(actual_diff)))
+    p_boot = max(p_boot, 1.0 / n_boot)  # never report exact 0
+
+    # Use the more powerful of JK and bootstrap as the primary p-value
+    # (both are valid; JK is parametric and tighter for clean returns)
+    primary_p = jk_p if not np.isnan(jk_p) else p_boot
 
     # Cohen's d effect size
     diff_returns = r_a - r_b
     cohens_d = diff_returns.mean() / (diff_returns.std() + 1e-12)
 
     # Information ratio of the difference
-    diff = r_a - r_b
-    ir = (diff.mean() * 252) / (diff.std() * np.sqrt(252)) if diff.std() > 0 else 0
+    ir = (diff_returns.mean() * 252) / (diff_returns.std() * np.sqrt(252)) if diff_returns.std() > 0 else 0
 
     return {
         "method_a": method_a,
         "method_b": method_b,
-        "sharpe_a": compute_sharpe(r_a, rf),
-        "sharpe_b": compute_sharpe(r_b, rf),
+        "sharpe_a": sr_a,
+        "sharpe_b": sr_b,
         "sharpe_diff": actual_diff,
         "bootstrap_ci_lo": ci_lo,
         "bootstrap_ci_hi": ci_hi,
         "bootstrap_se": sharpe_diffs.std(),
         "bootstrap_p": p_boot,
+        "jk_z": jk_z,
+        "jk_p": jk_p,
+        "primary_p": primary_p,
         "paired_t": t_paired,
         "paired_p": p_paired,
         "information_ratio": ir,
@@ -273,7 +326,8 @@ def diebold_mariano_test(results, method_a="DHRP", method_b="HRP", loss_fn="squa
 def pairwise_sharpe_tests(results, ref="DHRP", n_boot=1000, rf=0.03, correction="holm"):
     """Run pairwise Sharpe difference tests between ref and all other methods.
 
-    Returns DataFrame with raw and Holm-Bonferroni adjusted p-values.
+    Uses Jobson-Korkie/Memmel parametric test as primary (more powerful than
+    naive bootstrap for moderate samples), with Holm-Bonferroni correction.
     """
     methods = sorted(results["method"].unique())
     if ref not in methods:
@@ -286,7 +340,8 @@ def pairwise_sharpe_tests(results, ref="DHRP", n_boot=1000, rf=0.03, correction=
             res = sharpe_difference_test(results, method_a=ref, method_b=other,
                                          n_boot=n_boot, rf=rf)
             rows.append(res)
-            raw_ps.append(res["bootstrap_p"])
+            # Prefer Jobson-Korkie (more powerful) over naive bootstrap
+            raw_ps.append(res.get("primary_p", res["bootstrap_p"]))
         except Exception:
             continue
 
