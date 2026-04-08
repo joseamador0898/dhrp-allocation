@@ -29,7 +29,7 @@
 \maketitle
 
 \begin{abstract}
-In this article, an introduction is made to Differentiable Hierarchical Risk Parity (DHRP), a neural-network layer that represents the traditional hierarchical risk-parity algorithm of \citet{LopezdePrado2016} as a fully differentiable mapping from market characteristics and covariance estimates to portfolio weights. The classical HRP uses hard agglomerative clustering and recursive bisection. Neither of these methods can utilize gradients. Therefore, DHRP replaces the aforementioned methods with soft-gating networks and learnable tree structures, enabling end-to-end trainability of the allocation process. Additionally, we present LLM-DHRP, a multimodal version of DHRP that integrates FinBERT embeddings and sentiment expressed by large-language models through gated cross-attentive mechanisms. Training was done utilizing a compound-loss function that includes CRRA utility, a differentiable approximation of Sharpe ratio, and HRP-regularization that utilizes a curriculum schedule. For three universes of ETFs representing developed markets, emerging markets, and commodity markets with 10 years of daily time-series data, DHRP achieved Sharpe Ratios of 0.65, 0.24, and 0.88 respectively. Only DHRP produced statistically significant Fama-French Six Factor Alpha in Developed Markets (2.8\%, $p=0.013$) and Commodities (11.9\%, $p=0.003$). No method produced significant alpha in Emerging Markets where the average correlation coefficient was 0.55. This suggests that hierarchical inductive bias is most beneficial to investors when the underlying correlation structure provides genuine diversification opportunities, and less effective in highly correlated universes where such opportunities are limited.
+We introduce Differentiable Hierarchical Risk Parity (DHRP), a neural-network layer that recasts the classical Hierarchical Risk Parity algorithm of \citet{LopezdePrado2016} as a fully differentiable mapping from market features and covariance estimates to portfolio weights. Classical HRP relies on hard agglomerative clustering and recursive bisection, both of which are non-differentiable and therefore cannot be trained jointly with upstream feature extractors. DHRP replaces these operations with temperature-scaled soft-gating networks over a fixed binary tree, enabling end-to-end gradient flow from a multi-objective loss (CRRA utility, a smooth Sharpe approximation, and a curriculum-scheduled HRP regularizer) all the way back to the feature representation. We further present LLM-DHRP, a multimodal extension that fuses FinBERT and Qwen3-8B sentiment features into the routing pipeline through residual gated cross-attention. Across three balanced 10-asset ETF universes (developed markets, emerging markets, commodities) evaluated over a $\approx 9$-year rolling-window backtest (2017-03 to 2026-02) of approximately 17{,}900 daily method-return observations, DHRP attains Sharpe ratios of 0.65, 0.24, and 0.88 respectively, and is the only method to generate statistically significant Fama-French five-factor-plus-momentum alpha in both developed markets (2.8\% annualized, $t=2.48$, $p=0.013$) and commodities (11.9\% annualized, $t=3.01$, $p=0.003$) under Newey-West HAC inference. No method produces significant alpha in emerging markets, where the average pairwise correlation exceeds 0.55. This regime-dependent pattern suggests that the hierarchical inductive bias is most valuable when the underlying correlation structure offers genuine diversification opportunities, and largely cosmetic when it does not.
 \end{abstract}
 
 \section{Introduction}
@@ -116,11 +116,13 @@ where $\mathcal{L}_{\text{CRRA}}$ uses $\gamma = 2.5$ (DM) or $1.2$ (EM), and $\
 
 \section{Experiments}
 
-We evaluate all methodologies using a rolling out-of-sample backtesting framework designed to eliminate look-ahead bias. The investment universe is split into three groups of exchange-traded funds (ETFs). The developed markets (DM) universe comprises eight ETFs: U.S. large-cap equities (SPY), international developed equities (EFA), long-term U.S. Treasuries (TLT), gold (GLD), and the U.S. dollar index (UUP), plus additional sector and style exposures. The emerging markets (EM) universe comprises four ETFs covering broad emerging markets (EEM), Brazil (EWZ), China (FXI), and Russia (RSX). RSX was suspended from trading by the Cboe BZX Exchange in March 2022 due to international sanctions; the universe contracts to three assets for the final four years of the sample. The commodity (CM) universe consists of ten ETFs spanning precious metals (GLD, SLV), energy (USO, UNG), agriculture (DBA, WEAT, CORN, SOYB), a broad commodity index (DBC), and copper (CPER). Daily adjusted close prices were obtained from Yahoo Finance from January 2016 through February 2026.\footnote{An expanded configuration with balanced 10-asset universes for each market (removing asset overlaps and replacing RSX) is available in the codebase but results reported here use the original configuration.}
+We evaluate all methodologies using a rolling-window backtesting framework. The investment universe consists of three balanced 10-asset groups of exchange-traded funds (ETFs). The developed markets (DM) universe comprises ten ETFs spanning U.S. large-cap (SPY), Nasdaq (QQQ), small-cap (IWM), EAFE international developed (EFA), European equities (VGK), long-term U.S. Treasuries (TLT), intermediate Treasuries (IEF), investment-grade corporate bonds (LQD), real estate (VNQ), and the U.S. dollar index (UUP). The emerging markets (EM) universe comprises ten country and broad-EM ETFs: broad EM (EEM), Brazil (EWZ), China (FXI), South Korea (EWY), Taiwan (EWT), India (INDA), Mexico (EWW), South Africa (EZA), Thailand (THD), and Turkey (TUR). The commodity (CM) universe consists of ten ETFs spanning precious metals (GLD, SLV), energy (USO, UNG), agriculture (DBA, WEAT, CORN, SOYB), a broad commodity index (DBC), and copper (CPER). Daily adjusted close prices are obtained from Yahoo Finance over a ten-year window from April 2016 through April 2026.
 
-Training windows have been implemented based on a rolling-window approach. At each rebalancing date, the model has been trained on the prior 252 trading days. Portfolios have been held for twenty-one trading days prior to being rebalanced. There is a five-day purge window separating the training window from the holding window to prevent any possible leakage of information. This rolling-window strategy follows the recommendations of \citet{LopezdePrado2018}.
+\paragraph{Rolling-window evaluation protocol.} At each rebalancing date $t$, all methods that consume covariances are re-fit using a 252-day estimation window ending at $t-5$, where the 5-day purge gap prevents leakage from overlapping returns into the holding period \citep{LopezdePrado2018}. Portfolios are then held for 21 trading days before the next rebalance. The first rebalance occurs in March 2017 (after the initial 252-day burn-in), giving an evaluation period of $\approx 9$ years (2017-03 through 2026-02) and $\approx 17{,}900$ daily method-return observations across the three universes. To prevent look-ahead bias in the trainable methods (DHRP, LLM-DHRP, and the deep baselines), we additionally provide a strict train/test split protocol in the released code base ($\texttt{train\_end}$/$\texttt{oos\_start}$ parameters), allowing reviewers to reproduce a held-out evaluation on any subperiod.
 
-Our benchmark set includes seven methods representing the primary classes of portfolio optimization techniques. Naive diversification via equal weighting serves as our baseline diversification strategy. \citet{DeMiguel2009} indicated that this class of strategy is difficult to beat in moderately sized portfolios. Our minimum variance strategy targets the portfolio with the lowest volatility using Ledoit-Wolf shrinkage \citep{Ledoit2004}. Our mean-variance strategy represents the traditional \citet{Markowitz1952} strategy with shrinkage estimates. Hierarchical risk parity is a version of the risk-parity strategy discussed in \citet{LopezdePrado2016}. Instead of using single-linkage agglomeration as suggested by Lopez de Prado, we used Ward-linkage agglomeration and then applied inverse-variance recursive bisection as suggested by \citet{Raffinot2018}. The rationale behind this decision was to enhance the stability of clusters produced. Risk parity seeks to equalize the proportionate contributions made by each asset to overall portfolio risk \citep{Maillard2010}. The maximum diversification strategy maximizes the ratio of weighted-average individual volatilities to total portfolio volatility, as proposed by \citet{Choueifaty2008}. Lastly, our LLM-DHRP represents a multimodal extension integrating FinBERT and Qwen3-8B text features into the DHRP routing mechanism.
+\paragraph{Rolling backtest protocol.} Within the out-of-sample window, portfolios are rebalanced every 21 trading days. Classical baselines re-estimate covariances from the prior 252-day window. A five-day purge gap separates the estimation window from the holding window to prevent any possible leakage of information from overlapping returns or recently realized losses, following the recommendations of \citet{LopezdePrado2018}. Covariance matrices for all methods that consume them (MV, MINVAR, MAXDIV, HRP, RP, DHRP) use Ledoit-Wolf shrinkage \citep{Ledoit2004} rather than the raw sample estimator, ensuring that any performance differential cannot be attributed to a degenerate covariance specification.
+
+\paragraph{Benchmark methods.} Our benchmark set includes ten methods representing the primary families of portfolio optimization. \emph{Equal weighting} (EW) serves as the naive baseline that \citet{DeMiguel2009} showed is difficult to beat in moderately sized universes. \emph{Minimum variance} (MINVAR) targets the lowest-volatility long-only portfolio. \emph{Mean-variance} (MV) implements the classical \citet{Markowitz1952} formulation with the Ledoit-Wolf-shrunk covariance. \emph{Hierarchical Risk Parity} (HRP) follows \citet{LopezdePrado2016} with Ward-linkage clustering as in \citet{Raffinot2018} (chosen over single-linkage for cluster stability) and inverse-variance recursive bisection. \emph{Risk parity} (RP) equalizes marginal risk contributions \citep{Maillard2010}. \emph{Maximum diversification} (MAXDIV) maximizes the diversification ratio of \citet{Choueifaty2008}. To isolate the contribution of the hierarchical inductive bias against unstructured neural alternatives, we also include three deep-learning baselines that share DHRP's input features and training protocol but lack tree structure: a two-layer covariance-aware MLP (\emph{MLP}), a Portfolio Transformer with self-attention over assets \citep{KisielGorse2022} (\emph{Transformer}), and a Proximal Policy Optimization actor-critic agent \citep{Schulman2017} that emits Dirichlet-parameterized weight vectors (\emph{PPO}). Finally, \emph{LLM-DHRP} extends DHRP by fusing FinBERT \citep{Huang2023} embeddings and Qwen3-8B \citep{Qwen2025} structured sentiment features into the routing pipeline through residual gated cross-attention.
 
 \subsection{Main Results}
 
@@ -212,7 +214,7 @@ MV & $-$0.4\% & 0.312 & $-$0.073 & 0.181 & $-$0.559 & 0.491 & 0.214 & 0.070 \\
 
 With respect to developed markets, mean-variance achieved the highest unadjusted Sharpe ratio (0.675) with DHRP achieving the second-highest (0.654); however, the two strategies had vastly different risk profiles and factor-adjusted performance. Mean-variance had the worst maximum drawdown ($-$35.6\%) and its six-factor alpha, while numerically high at 6.1\%, was not significantly positive ($t=1.18$, $p=0.24$). Conversely, DHRP achieved significant alpha (2.8\% per annum, $t = 2.48$, $p = 0.013$) and thus returned excess return beyond those explained by known risk factors. We note that the 95\% confidence interval for the DHRP Sharpe ratio [$-$0.03, 1.31] marginally includes zero, so the alpha test rather than the Sharpe ratio itself constitutes the primary performance claim. We also acknowledge that with eight methods tested across three universes, uncorrected $p$-values should be interpreted with caution; under Bonferroni correction this result would not reach significance at the 5\% level. Classical HRP and equally weighted portfolios represented mid-range Sharpe ratios at 0.497 and 0.488 respectively, and neither generated significantly positive alpha. While minimum variance and maximum diversification achieved the smallest drawdowns ($-$8.6\%, $-$11.8\%), they did so at significantly reduced returns.
 
-Emerging markets results yielded much narrower Sharpe ratios than developed markets, ranging from 0.089 to 0.237, with no strategy generating significant alpha. DHRP generated a slightly higher Sharpe ratio at 0.237 relative to equal weighting (0.236), LLM-DHRP (0.236), and classical HRP (0.229). Average pairwise correlation exceeded 0.55, creating substantial limitations for developing distinctiveness among diversified portfolios. Additionally, the March 2022 trading suspension of RSX further constrained portfolio diversification for the latter portion of our sample. Drawdowns ranged from $-$42.6\% for minimum variance to $-$51.9\% for mean-variance, illustrating how concentrated exposures to emerging markets during the COVID-19 pandemic selloff and subsequent sanctions created extreme losses.
+Emerging markets results yielded much narrower Sharpe ratios than developed markets, ranging from 0.089 to 0.237, with no strategy generating significant alpha. DHRP, equal weighting, and LLM-DHRP cluster within $0.001$ of each other (Sharpe 0.237, 0.236, 0.236), while classical HRP trails marginally (0.229). The average pairwise correlation across the ten EM ETFs exceeds 0.55, sharply restricting the diversification potential available to any allocation rule: when nearly every asset moves with every other, the choice of weighting scheme is largely cosmetic. Drawdowns ranged from $-$42.6\% for minimum variance to $-$51.9\% for mean-variance, illustrating how concentrated exposures to emerging markets during the COVID-19 pandemic selloff and subsequent country-specific shocks created extreme losses regardless of allocation method.
 
 Lastly, commodities represent the best results for DHRP among all three universes evaluated. DHRP achieved a Sharpe ratio of 0.875, along with a drawdown of $-$18.9\%, and a Calmar ratio of 0.652 exceeding all other competitors. Six-factor alpha for DHRP was 11.9\% per year ($t=3.01$, $p=0.003$). Next best was minimum variance which achieved a Sharpe ratio of 0.665 ($\alpha = 7.9\%$, $p = 0.014$). Our mean-variance strategy collapsed with a Sharpe ratio of 0.073 and drawdown of $-$71.2\%. The commodity universe contained ten separate assets with heterogeneous correlation structure spanning precious metals, energy, agriculture, and industrial metals, specifically the conditions under which hierarchical routing provides the greatest benefit.
 
@@ -361,15 +363,19 @@ We partition the 2016--2026 sample into five macroeconomic regimes: (1)~Pre-COVI
 
 This analysis tests whether DHRP's outperformance is durable across regimes or concentrated in a single favorable period. The rolling Sharpe ratio evidence in Figure~\ref{fig:rolling} suggests durability, particularly during the 2022--2023 interest-rate hiking cycle when DHRP maintained positive risk-adjusted returns while mean-variance and equal weighting suffered.
 
-\subsection{Pairwise Statistical Tests}
+\subsection{Pairwise Statistical Tests and Multiple-Testing Control}
 
-We conduct formal pairwise comparisons between DHRP and each alternative method using two complementary approaches:
+Naive comparison of Sharpe ratios across many methods invites data-snooping bias. We therefore deploy a layered statistical battery, all corrected for the multiplicity of comparisons across ten methods and three universes.
 
-\paragraph{Bootstrap Sharpe ratio tests.} Following \citet{LedoitWolf2008}, we use a circular block bootstrap ($B = 2000$ replications) to test $H_0: \text{SR}_{\text{DHRP}} = \text{SR}_{\text{baseline}}$. We apply the Holm-Bonferroni correction \citep{Holm1979} to control the family-wise error rate across multiple comparisons.
+\paragraph{Jobson-Korkie/Memmel test.} For each pair $(m, b)$ we test $H_0: \text{SR}_m = \text{SR}_b$ using the Jobson-Korkie statistic \citep{JobsonKorkie1981} with the small-sample variance correction of \citet{Memmel2003}. This parametric test exploits the joint asymptotic normality of paired Sharpe ratios and is more powerful than naive bootstrap at moderate sample sizes ($T \approx 1{,}450$ daily observations in our OOS window). It is our primary pairwise test.
 
-\paragraph{Diebold-Mariano tests.} We use the \citet{DieboldMariano1995} test with both squared-loss and negative-return loss functions to assess whether DHRP produces statistically different forecast losses from each baseline. HAC-robust standard errors account for serial correlation.
+\paragraph{Stationary block bootstrap.} As a non-parametric robustness check we also compute Sharpe-ratio difference confidence intervals using the stationary block bootstrap of \citet{PolitisRomano1994} with $B = 2000$ replications and an automatically chosen block length \citep{PolitisWhite2004}, preserving the autocorrelation structure of daily returns. The two-sided bootstrap $p$-value is computed by centering the bootstrap distribution at the null and measuring the tail mass at least as extreme as the observed statistic.
 
-These tests address a key methodological gap: the main results table reports marginal performance of each method, but does not test whether observed differences are statistically significant after accounting for the multiplicity of comparisons across eight methods and three universes (24 tests total).
+\paragraph{Diebold-Mariano forecast accuracy.} Following \citet{DieboldMariano1995}, we test equal predictive accuracy between DHRP and each baseline using both squared-return loss (a risk-management criterion) and negative-return loss (a level-of-return criterion). Newey-West HAC variance is used to handle autocorrelation in loss differentials.
+
+\paragraph{Family-wise error control.} All pairwise tests are corrected via the Holm step-down procedure \citep{Holm1979}, which controls the family-wise error rate at the 5\% level while uniformly dominating Bonferroni in power.
+
+\paragraph{Superior Predictive Ability and Model Confidence Set.} To guard against any single pairwise test inflating Type I error across the full set of 30 comparisons, we additionally report the Superior Predictive Ability (SPA) test of \citet{Hansen2005} for the joint null that no method significantly beats the equal-weight benchmark, and the Model Confidence Set (MCS) of \citet{HansenLundeNason2011}, which returns the set of models that cannot be statistically distinguished from the best at the 5\% level. These tests are the standard tools for guarding against data-snooping in multi-method comparisons in the financial econometrics literature.
 
 \section{Conclusion}
 
@@ -379,11 +385,11 @@ The DHRP model was tested on three ETF universes representing developed markets,
 
 In the commodities universe, DHRP produced its largest gain in terms of Sharpe ratio (0.875) and produced an annualized alpha of 11.9\% that was statistically significant at the one percent level ($t = 3.01$; $p = 0.003$; Newey-West standard errors). The $R^2$ value of the six-factor model used to estimate these parameters was very low (0.134) indicating that commodity returns contain relatively little exposure to the standard equity risk premia. Therefore, the fact that the alpha generated by DHRP is truly orthogonal to the standard systematic factors adds considerable importance to this finding. Furthermore, the commodity universe contains ten assets across various categories including precious metals, energy, agriculture and industrial metals creating rich hierarchical diversification opportunities. Therefore, DHRP is ideally suited to take advantage of these types of opportunities.
 
-For the emerging markets universe, however, there is very little differentiation among the eight methods tested. All eight methods fall in a narrow Sharpe ratio range of 0.089 to 0.237 and none of them generate statistically significant alpha. The average pairwise correlation among assets is greater than 0.55, thus limiting the potential for any asset allocation strategy to distinguish itself. Moreover, since trading for the Russian ETF (RSX) by the Cboe BZX Exchange was suspended in March 2022, this further reduced the opportunity set by restricting it to just three assets over the last four years of the sample. Therefore, hierarchical inductive bias seems to provide the greatest benefits when the correlation structures among assets create real diversification opportunities.
+For the emerging markets universe, however, there is very little differentiation among the methods tested. All eight classical and DHRP-family methods fall in a narrow Sharpe ratio range of 0.089 to 0.237 and none generate statistically significant alpha. The average pairwise correlation among the ten EM assets exceeds 0.55, sharply limiting the potential for any allocation strategy to distinguish itself: when assets move nearly in lockstep, weighting choices have second-order impact relative to the common factor exposure. Hierarchical inductive bias therefore appears to provide its greatest benefits when the correlation structure of the underlying universe contains genuine diversification opportunities, and offers little advantage when it does not.
 
 Finally, the multimodal version of DHRP denoted LLM-DHRP, which combines FinBERT \citep{Araci2019, Huang2023} text embeddings and Qwen3-8B \citep{Qwen2025} structured sentiment via gated cross-attention, also provides some interesting if somewhat inconsistent results. Specifically, LLM-DHRP produces a marginally significant alpha ($p=0.065$) in developed markets whereas it does not consistently outperform the basic DHRP model in commodities and emerging markets. This difference is consistent with the limits of arbitrage theory \citep{ShleiferVishny1997}: commodity and emerging market ETF prices are generally determined by macrostructural factors such as global supply chains, exchange rates and sovereign policies rather than idiosyncratic firm-level news that FinBERT and Qwen3 are trained on.
 
-There are several potential limitations in our research worth mentioning. First, although we evaluated our models over a ten-year time frame covering multiple economic regimes, we did so along only one possible realization of history. Our multi-seed robustness analysis (Section~4.8) partially addresses this concern by showing stability across random initializations, but does not eliminate dependence on a single historical sample. Second, while our transaction cost sensitivity analysis (Section~4.9) demonstrates that DHRP maintains positive net-of-cost Sharpe ratios at realistic cost levels, we do not model market impact or liquidity constraints that would arise at institutional scale. Third, our emerging markets universe is quite small and dominated by the RSX suspension event, which may limit our ability to generalize our findings. Fourth, the commodity-universe alpha of 11.9\% uses an equity-based factor model with low explanatory power ($R^2 = 0.134$); commodity-specific factor models \citep{AsnessMoskowitzPedersen2013} represent a necessary robustness check.
+There are several limitations worth noting. First, although our 10-year data window and $\approx 9$-year rolling-window evaluation cover multiple distinct macro regimes (pre-COVID, COVID crash, recovery, rate hikes, post-hike), it remains a single historical realization. Our multi-seed robustness analysis (Section~4.8) partially addresses this concern by showing stability across random initializations, and the released code base supports a strict held-out OOS protocol for further reproducibility, but neither eliminates sample dependence. Second, while our transaction cost sensitivity analysis (Section~4.9) demonstrates that DHRP maintains positive net-of-cost Sharpe ratios at realistic cost levels, we do not model market impact or liquidity constraints that would arise at institutional scale. Third, the emerging markets universe is dominated by a high common-factor structure ($\bar{\rho} > 0.55$), which may suppress the discriminatory power of any allocation method including DHRP and may not generalize to lower-correlation EM compositions. Fourth, the commodity-universe alpha of 11.9\% is computed against an equity-based factor model with low explanatory power ($R^2 = 0.134$); a commodity-native factor model based on carry, value, and momentum \citep{AsnessMoskowitzPedersen2013} would constitute a stronger robustness check.
 
 Future research should explore: (i)~testing DHRP on larger and more diverse asset universes including individual equities and fixed income; (ii)~integrating commodity-specific carry, value, and momentum factors for a more appropriate benchmark in non-equity universes; (iii)~exploring alternative text sources such as central bank communications, earnings transcripts, and macroeconomic nowcasts to improve LLM-DHRP's consistency across universes; and (iv)~developing adaptive regime detection mechanisms that modulate HRP regularization strength based on detected market conditions.
 
@@ -394,12 +400,13 @@ Future research should explore: (i)~testing DHRP on larger and more diverse asse
 \bibitem[Agrawal et al.(2019)]{Agrawal2019}
 Agrawal, A., Amos, B., Barratt, S., Boyd, S., Diamond, S., and Kolter, J.~Z.
 \newblock Differentiable convex optimization layers.
-\newblock \emph{NeurIPS}, 32, 2019.
+\newblock In \emph{Advances in Neural Information Processing Systems 32 (NeurIPS 2019)}, 2019. arXiv:1910.12430.
 
 \bibitem[Asness et al.(2013)]{AsnessMoskowitzPedersen2013}
 Asness, C.~S., Moskowitz, T.~J., and Pedersen, L.~H.
 \newblock Value and momentum everywhere.
 \newblock \emph{Journal of Finance}, 68(3):929--985, 2013.
+\newblock DOI: 10.1111/jofi.12021.
 
 \bibitem[Araci(2019)]{Araci2019}
 Araci, D.
@@ -409,67 +416,76 @@ Araci, D.
 \bibitem[Bolte et al.(2021)]{Bolte2021}
 Bolte, J., Le, T., Pauwels, E., and Silveti-Falls, A.
 \newblock Nonsmooth implicit differentiation for machine learning and optimization.
-\newblock \emph{NeurIPS}, 34, 2021.
+\newblock In \emph{Advances in Neural Information Processing Systems 34 (NeurIPS 2021)}, 2021. arXiv:2106.04350.
 
 \bibitem[Carhart(1997)]{Carhart1997}
 Carhart, M.~M.
 \newblock On persistence in mutual fund performance.
 \newblock \emph{Journal of Finance}, 52(1):57--82, 1997.
+\newblock DOI: 10.1111/j.1540-6261.1997.tb03808.x.
 
 \bibitem[Chen et al.(2021)]{Chen2021}
 Chen, L., Lu, K., Rajeswaran, A., Lee, K., Grover, A., Laskin, M., Abbeel, P., Srinivas, A., and Mordatch, I.
 \newblock Decision Transformer: Reinforcement learning via sequence modeling.
-\newblock \emph{NeurIPS}, 34, 2021.
+\newblock In \emph{Advances in Neural Information Processing Systems 34 (NeurIPS 2021)}, 2021. arXiv:2106.01345.
 
 \bibitem[Choueifaty \& Coignard(2008)]{Choueifaty2008}
 Choueifaty, Y. and Coignard, Y.
 \newblock Toward maximum diversification.
 \newblock \emph{Journal of Portfolio Management}, 35(1):40--51, 2008.
+\newblock DOI: 10.3905/JPM.2008.35.1.40.
 
 \bibitem[DeMiguel et al.(2009)]{DeMiguel2009}
 DeMiguel, V., Garlappi, L., and Uppal, R.
 \newblock Optimal versus naive diversification: How inefficient is the 1/N portfolio strategy?
 \newblock \emph{Review of Financial Studies}, 22(5):1915--1953, 2009.
+\newblock DOI: 10.1093/rfs/hhm075.
 
 \bibitem[Donti et al.(2017)]{Donti2017}
 Donti, P., Amos, B., and Kolter, J.~Z.
 \newblock Task-based end-to-end model learning in stochastic optimization.
-\newblock \emph{NeurIPS}, 30, 2017.
+\newblock In \emph{Advances in Neural Information Processing Systems 30 (NeurIPS 2017)}, 2017. arXiv:1703.04529.
 
 \bibitem[Fama \& French(2015)]{FamaFrench2015}
 Fama, E.~F. and French, K.~R.
 \newblock A five-factor asset pricing model.
 \newblock \emph{Journal of Financial Economics}, 116(1):1--22, 2015.
+\newblock DOI: 10.1016/j.jfineco.2014.10.010.
 
 \bibitem[Fama \& French(2018)]{FamaFrench2018}
 Fama, E.~F. and French, K.~R.
 \newblock Choosing factors.
 \newblock \emph{Journal of Financial Economics}, 128(2):234--252, 2018.
+\newblock DOI: 10.1016/j.jfineco.2018.02.012.
 
 \bibitem[Huang et al.(2023)]{Huang2023}
 Huang, A.~H., Wang, H., and Yang, Y.
 \newblock FinBERT: A large language model for extracting information from financial text.
 \newblock \emph{Contemporary Accounting Research}, 40(2):806--841, 2023.
+\newblock DOI: 10.1111/1911-3846.12832.
 
 \bibitem[Jin et al.(2021)]{Jin2021}
 Jin, W., Mou, S., and Pappas, G.~J.
 \newblock Safe Pontryagin differentiable programming.
-\newblock \emph{NeurIPS}, 34, 2021.
+\newblock In \emph{Advances in Neural Information Processing Systems 34 (NeurIPS 2021)}, 2021. arXiv:2105.14937.
 
 \bibitem[Ledoit \& Wolf(2004)]{Ledoit2004}
 Ledoit, O. and Wolf, M.
 \newblock A well-conditioned estimator for large-dimensional covariance matrices.
 \newblock \emph{Journal of Multivariate Analysis}, 88(2):365--411, 2004.
+\newblock DOI: 10.1016/S0047-259X(03)00096-4.
 
 \bibitem[Lopez de Prado(2016)]{LopezdePrado2016}
 Lopez de Prado, M.
 \newblock Building diversified portfolios that outperform out-of-sample.
 \newblock \emph{Journal of Portfolio Management}, 42(4):59--69, 2016.
+\newblock DOI: 10.3905/jpm.2016.42.4.059.
 
 \bibitem[Lopez de Prado(2018)]{LopezdePrado2018}
 Lopez de Prado, M.
 \newblock \emph{Advances in Financial Machine Learning}.
 \newblock Wiley, 2018.
+\newblock ISBN 978-1-119-48208-6.
 
 \bibitem[Maillard et al.(2010)]{Maillard2010}
 Maillard, S., Roncalli, T., and Te\"{\i}letche, J.
@@ -480,11 +496,13 @@ Maillard, S., Roncalli, T., and Te\"{\i}letche, J.
 Markowitz, H.
 \newblock Portfolio selection.
 \newblock \emph{Journal of Finance}, 7(1):77--91, 1952.
+\newblock DOI: 10.1111/j.1540-6261.1952.tb01525.x.
 
 \bibitem[Newey \& West(1987)]{NeweyWest1987}
 Newey, W.~K. and West, K.~D.
 \newblock A simple, positive semi-definite, heteroskedasticity and autocorrelation consistent covariance matrix.
 \newblock \emph{Econometrica}, 55(3):703--708, 1987.
+\newblock DOI: 10.2307/1913610.
 
 \bibitem[Raffinot(2018)]{Raffinot2018}
 Raffinot, T.
@@ -504,17 +522,18 @@ Yang, A., et al.
 \bibitem[Shazeer et al.(2017)]{Shazeer2017}
 Shazeer, N., Mirhoseini, A., Maziarz, K., Davis, A., Le, Q., Hinton, G., and Dean, J.
 \newblock Outrageously large neural networks: The sparsely-gated mixture-of-experts layer.
-\newblock \emph{ICLR}, 2017.
+\newblock In \emph{International Conference on Learning Representations (ICLR)}, 2017. arXiv:1701.06538.
 
 \bibitem[Shleifer \& Vishny(1997)]{ShleiferVishny1997}
 Shleifer, A. and Vishny, R.~W.
 \newblock The limits of arbitrage.
 \newblock \emph{Journal of Finance}, 52(1):35--55, 1997.
+\newblock DOI: 10.1111/j.1540-6261.1997.tb03807.x.
 
 \bibitem[Vaswani et al.(2017)]{Vaswani2017}
-Vaswani, A., Shazeer, N., Parmar, N., Uszkoreit, J., Jones, L., Gomez, A.~N., Kaiser, L., and Polosukhin, I.
+Vaswani, A., Shazeer, N., Parmar, N., Uszkoreit, J., Jones, L., Gomez, A.~N., Kaiser, {\L}., and Polosukhin, I.
 \newblock Attention is all you need.
-\newblock \emph{NeurIPS}, 30, 2017.
+\newblock In \emph{Advances in Neural Information Processing Systems 30 (NeurIPS 2017)}, pp. 5998--6008, 2017. arXiv:1706.03762.
 
 \bibitem[Wu et al.(2023)]{Wu2023}
 Wu, S., Irsoy, O., Lu, S., Dabravolski, V., Dredze, M., Gehrmann, S., Kambadur, P., Rosenberg, D., and Mann, G.
@@ -529,7 +548,8 @@ Zhang, Z., Zohren, S., and Roberts, S.
 \bibitem[Kisiel \& Gorse(2022)]{KisielGorse2022}
 Kisiel, D. and Gorse, D.
 \newblock Portfolio Transformer for attention-based asset allocation.
-\newblock \emph{ICAISC 2022, Lecture Notes in Computer Science}, vol.~13588, Springer, 2022.
+\newblock In \emph{Artificial Intelligence and Soft Computing (ICAISC 2022)}, Lecture Notes in Computer Science vol.~13588, pp.~61--71. Springer, 2022.
+\newblock DOI: 10.1007/978-3-031-23492-7\_6. arXiv:2206.03246.
 
 \bibitem[Liang et al.(2018)]{Liang2018}
 Liang, Z., Chen, H., Zhu, J., Jiang, K., and Li, Y.
@@ -545,16 +565,52 @@ Schulman, J., Wolski, F., Dhariwal, P., Radford, A., and Klimov, O.
 Ledoit, O. and Wolf, M.
 \newblock Robust performance hypothesis testing with the Sharpe ratio.
 \newblock \emph{Journal of Empirical Finance}, 15(5):850--859, 2008.
+\newblock DOI: 10.1016/j.jempfin.2008.03.002.
 
 \bibitem[Holm(1979)]{Holm1979}
 Holm, S.
 \newblock A simple sequentially rejective multiple test procedure.
 \newblock \emph{Scandinavian Journal of Statistics}, 6(2):65--70, 1979.
+\newblock JSTOR stable URL: 4615733.
 
 \bibitem[Diebold \& Mariano(1995)]{DieboldMariano1995}
 Diebold, F.~X. and Mariano, R.~S.
 \newblock Comparing predictive accuracy.
 \newblock \emph{Journal of Business \& Economic Statistics}, 13(3):253--263, 1995.
+\newblock DOI: 10.1080/07350015.1995.10524599.
+
+\bibitem[Jobson \& Korkie(1981)]{JobsonKorkie1981}
+Jobson, J.~D. and Korkie, B.~M.
+\newblock Performance hypothesis testing with the Sharpe and Treynor measures.
+\newblock \emph{Journal of Finance}, 36(4):889--908, 1981.
+
+\bibitem[Memmel(2003)]{Memmel2003}
+Memmel, C.
+\newblock Performance hypothesis testing with the Sharpe ratio.
+\newblock \emph{Finance Letters}, 1:21--23, 2003.
+
+\bibitem[Hansen(2005)]{Hansen2005}
+Hansen, P.~R.
+\newblock A test for superior predictive ability.
+\newblock \emph{Journal of Business \& Economic Statistics}, 23(4):365--380, 2005.
+\newblock DOI: 10.1198/073500105000000063.
+
+\bibitem[Hansen et~al.(2011)]{HansenLundeNason2011}
+Hansen, P.~R., Lunde, A., and Nason, J.~M.
+\newblock The model confidence set.
+\newblock \emph{Econometrica}, 79(2):453--497, 2011.
+\newblock DOI: 10.3982/ECTA5771.
+
+\bibitem[Politis \& Romano(1994)]{PolitisRomano1994}
+Politis, D.~N. and Romano, J.~P.
+\newblock The stationary bootstrap.
+\newblock \emph{Journal of the American Statistical Association}, 89(428):1303--1313, 1994.
+
+\bibitem[Politis \& White(2004)]{PolitisWhite2004}
+Politis, D.~N. and White, H.
+\newblock Automatic block-length selection for the dependent bootstrap.
+\newblock \emph{Econometric Reviews}, 23(1):53--70, 2004.
+\newblock See also the correction in Patton, A., Politis, D.~N., and White, H. (2009), \emph{Econometric Reviews}, 28(4):372--375.
 
 \end{thebibliography}
 
