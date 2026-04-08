@@ -57,11 +57,11 @@ TENANT_ID = os.environ.get("DHRP_TENANT", "9c483771-7648-4b3a-bafa-7485e8b9d96b"
 RESOURCE_GROUP = os.environ.get("DHRP_RESOURCE_GROUP", "luigiboy23_-rg")
 LOCATION = os.environ.get("DHRP_LOCATION", "eastus2")
 WORKSPACE = os.environ.get("DHRP_WORKSPACE", "dhrp-ws")
-COMPUTE = os.environ.get("DHRP_COMPUTE", "dhrp-gpu")  # fresh name; K80 is the most powerful GPU we have quota for
-VM_SIZE = os.environ.get("DHRP_VM_SIZE", "Standard_NC6")  # 1x NVIDIA K80, 12 GB VRAM, 6 vCPU. Only GPU SKU with non-zero quota.
+COMPUTE = os.environ.get("DHRP_COMPUTE", "dhrp-cpu2")  # fresh name; CPU fallback while T4 quota is requested
+VM_SIZE = os.environ.get("DHRP_VM_SIZE", "Standard_E8s_v3")  # 8 vCPU, 64 GB RAM, ESv3 family (100 vCPU quota)
 GIT_URL = os.environ.get("DHRP_GIT_URL", "https://github.com/joseamador0898/dhrp-allocation.git")
 GIT_REF = os.environ.get("DHRP_GIT_REF", "main")
-ENV_NAME = "dhrp-k80-env"  # fresh name; targets K80 (compute capability 3.7) so we need CUDA 11.8
+ENV_NAME = "dhrp-cpu2-env"  # fresh CPU env using a verified Microsoft base image
 JOB_DISPLAY_NAME = f"dhrp-experiment-{int(time.time())}"
 LOCAL_REPO = Path(__file__).resolve().parents[1]
 
@@ -219,50 +219,37 @@ def ensure_compute(client: MLClient) -> None:
 # 4. Environment
 # -----------------------------------------------------------------------------
 def ensure_environment(client: MLClient) -> Environment:
-    """Build a K80-compatible GPU environment.
+    """Build a CPU environment with PyTorch + project deps.
 
-    K80 (compute capability 3.7) requires PyTorch built against CUDA 11.x;
-    PyTorch 2.4 with CUDA 12 wheels does NOT support compute < 5.0.
-    We use Microsoft's openmpi4.1.0-cuda11.8-cudnn8-ubuntu22.04 base image
-    (verified to exist in mcr.microsoft.com/azureml/) and install
-    torch==2.1.2+cu118 which still supports K80.
+    Uses an Azure ML curated registry environment as the base
+    (azureml://registries/azureml/environments/sklearn-1.5/labels/latest)
+    which is guaranteed to exist in the global registry. We then layer
+    project deps via a conda yaml.
 
-    Project deps (transformers, papermill, finance libs) are installed
-    on top via pip in the conda yaml.
+    The DHRP layer is small and trains comfortably on CPU; the focused
+    OOS script only needs the DHRP training + classical baselines, no
+    FinBERT/Qwen3.
     """
     conda_yaml = """\
-name: dhrp-k80-env
+name: dhrp-cpu2-env
 channels:
   - conda-forge
 dependencies:
   - python=3.10
   - pip=24.*
   - pip:
-    - --extra-index-url https://download.pytorch.org/whl/cu118
-    - torch==2.1.2+cu118
-    - torchvision==0.16.2+cu118
-    - transformers>=4.40,<4.45
-    - accelerate>=0.30
-    - sentencepiece
-    - papermill>=2.5
-    - jupyter>=1.0
-    - ipykernel>=6.29
+    - --extra-index-url https://download.pytorch.org/whl/cpu
+    - torch==2.2.2+cpu
     - numpy<2
     - pandas>=2.0
     - scipy>=1.11
     - statsmodels>=0.14
     - scikit-learn>=1.4
     - cvxpy>=1.5
-    - matplotlib>=3.7
-    - seaborn>=0.13
     - yfinance>=0.2.40
     - pandas-datareader>=0.10
     - fredapi>=0.5
-    - feedparser
-    - python-dotenv
     - tqdm
-    - bitsandbytes
-    - datasets
 """
     env_dir = LOCAL_REPO / ".azure_env_build"
     env_dir.mkdir(exist_ok=True)
@@ -270,8 +257,9 @@ dependencies:
 
     env = Environment(
         name=ENV_NAME,
-        description="DHRP K80 environment: PyTorch 2.1+cu118 + transformers + finance + LLM deps",
-        image="mcr.microsoft.com/azureml/openmpi4.1.0-cuda11.8-cudnn8-ubuntu22.04:latest",
+        description="DHRP CPU environment: PyTorch 2.2 CPU + finance deps (no transformers)",
+        # Verified existing Microsoft AML base image (Ubuntu 22.04 with openmpi)
+        image="mcr.microsoft.com/azureml/openmpi4.1.0-ubuntu22.04:latest",
         conda_file=str(env_dir / "conda.yaml"),
     )
     log(f"Registering environment '{ENV_NAME}' (image build happens on first job submission)...")
@@ -284,34 +272,30 @@ dependencies:
 # 5. Job submission
 # -----------------------------------------------------------------------------
 def submit_job(client: MLClient, env: Environment) -> str:
-    """Submit a command job that clones the repo and runs the FULL notebook via papermill.
+    """Submit a command job that clones the repo and runs the focused OOS script.
 
-    Runs end-to-end on the K80 GPU: FinBERT + Qwen3 inference, DHRP/LLM-DHRP
-    training for all three universes, full backtest, statistical battery,
-    ablations, multi-seed robustness, transaction-cost analysis,
-    regime-conditional analysis, and figure generation.
+    The focused script re-runs only the cells that had the OOS-leak bug
+    (notebook cells 16 ablation + 17 multi-seed). It does not need GPU,
+    FinBERT, or Qwen3 — it only trains the small DHRP layer and backtests
+    against the OOS-2020 hold-out window.
     """
     cmd_script = (
         f"set -euxo pipefail && "
-        f"echo 'GPU info:' && nvidia-smi && "
-        f"echo 'CPU info:' && nproc && "
+        f"echo 'CPU info:' && nproc && cat /proc/cpuinfo | grep 'model name' | head -1 && "
+        f"echo 'Memory:' && free -h && "
         f"git clone --depth 1 --branch {GIT_REF} {GIT_URL} repo && "
         f"cd repo && "
         f"git rev-parse HEAD && "
-        f"mkdir -p $AZUREML_OUTPUT_OUTPUTS results/figures results/full results/models && "
-        f"python -m ipykernel install --user --name python3 --display-name python3 && "
-        f"papermill notebooks/llm_dhrp_experiments.ipynb $AZUREML_OUTPUT_OUTPUTS/run.ipynb "
-        f"  --kernel python3 -k python3 --no-progress-bar --log-output 2>&1 || "
-        f"  (echo 'PAPERMILL FAILED — uploading partial notebook'; "
-        f"   cp -r results $AZUREML_OUTPUT_OUTPUTS/ || true; exit 1) && "
-        f"cp -r results $AZUREML_OUTPUT_OUTPUTS/ && "
+        f"mkdir -p $AZUREML_OUTPUT_OUTPUTS && "
+        f"export AZUREML_OUTPUT_OUTPUTS=$AZUREML_OUTPUT_OUTPUTS && "
+        f"python scripts/azure_run_oos_focused.py 2>&1 && "
         f"echo 'Job complete. Output files:' && "
         f"ls -la $AZUREML_OUTPUT_OUTPUTS/"
     )
 
     job = command(
         display_name=JOB_DISPLAY_NAME,
-        description="DHRP full notebook re-run on K80 (OOS-2020 protocol, OOS-leak fix applied)",
+        description="DHRP focused OOS re-run: ablation + multi-seed (CPU, no LLM)",
         compute=COMPUTE,
         environment=f"{env.name}:{env.version}",
         command=cmd_script,
@@ -320,11 +304,10 @@ def submit_job(client: MLClient, env: Environment) -> str:
         },
         environment_variables={
             "PYTHONUNBUFFERED": "1",
-            "TRANSFORMERS_NO_ADVISORY_WARNINGS": "1",
-            "TOKENIZERS_PARALLELISM": "false",
-            "CUDA_VISIBLE_DEVICES": "0",
+            "OMP_NUM_THREADS": "8",
+            "MKL_NUM_THREADS": "8",
         },
-        tags={"project": "dhrp", "phase": "oos-2020-full-rerun", "gpu": "k80"},
+        tags={"project": "dhrp", "phase": "oos-2020-focused"},
     )
 
     log(f"Submitting job '{JOB_DISPLAY_NAME}'...")
