@@ -46,7 +46,9 @@ OOS_START = "2020-07-01"
 END = datetime.now().strftime("%Y-%m-%d")
 START = (datetime.now() - timedelta(days=14 * 365)).strftime("%Y-%m-%d")
 
-OUTPUTS = Path(os.environ.get("AZUREML_OUTPUT_OUTPUTS", "outputs"))
+# Always write to ./outputs in the current working directory.
+# Azure ML auto-uploads ./outputs from the working directory at job completion.
+OUTPUTS = Path("outputs")
 OUTPUTS.mkdir(parents=True, exist_ok=True)
 
 device = "cuda" if torch.cuda.is_available() else "cpu"

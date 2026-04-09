@@ -279,18 +279,19 @@ def submit_job(client: MLClient, env: Environment) -> str:
     FinBERT, or Qwen3 — it only trains the small DHRP layer and backtests
     against the OOS-2020 hold-out window.
     """
+    # Note: set -e + -x + -o pipefail (NOT -u, which would crash on unset env vars)
+    # Files written to ./outputs in the working directory are auto-uploaded by Azure ML.
     cmd_script = (
-        f"set -euxo pipefail && "
+        f"set -exo pipefail && "
         f"echo 'CPU info:' && nproc && cat /proc/cpuinfo | grep 'model name' | head -1 && "
         f"echo 'Memory:' && free -h && "
         f"git clone --depth 1 --branch {GIT_REF} {GIT_URL} repo && "
         f"cd repo && "
         f"git rev-parse HEAD && "
-        f"mkdir -p $AZUREML_OUTPUT_OUTPUTS && "
-        f"export AZUREML_OUTPUT_OUTPUTS=$AZUREML_OUTPUT_OUTPUTS && "
+        f"mkdir -p outputs && "
         f"python scripts/azure_run_oos_focused.py 2>&1 && "
-        f"echo 'Job complete. Output files:' && "
-        f"ls -la $AZUREML_OUTPUT_OUTPUTS/"
+        f"echo 'Job complete. Output files in ./outputs:' && "
+        f"ls -la outputs/"
     )
 
     job = command(
@@ -299,9 +300,6 @@ def submit_job(client: MLClient, env: Environment) -> str:
         compute=COMPUTE,
         environment=f"{env.name}:{env.version}",
         command=cmd_script,
-        outputs={
-            "outputs": Output(type=AssetTypes.URI_FOLDER, mode="rw_mount"),
-        },
         environment_variables={
             "PYTHONUNBUFFERED": "1",
             "OMP_NUM_THREADS": "8",

@@ -36,7 +36,9 @@ CACHE_FILE = os.path.expanduser("~/.dhrp_azure_auth_record.json")
 
 # All modern GPU families to request quota for. Format: (family_name, target_vcpu, sku, gpu)
 QUOTA_REQUESTS = [
-    ("standardNCASv3_T4Family",   4,  "Standard_NC4as_T4_v3",     "1x T4 16GB"),
+    # T4: underscore in usage name is rejected by Microsoft.Quota REST API as
+    # InvalidResourceName; the resource ID form drops the underscore.
+    ("standardNCASv3T4Family",    4,  "Standard_NC4as_T4_v3",     "1x T4 16GB"),
     ("standardNCSv3Family",       6,  "Standard_NC6s_v3",         "1x V100 16GB"),
     ("StandardNVADSA10v5Family",  6,  "Standard_NV6ads_A10_v5",   "1x A10 24GB"),
     ("StandardNCADSA100v4Family", 24, "Standard_NC24ads_A100_v4", "1x A100 80GB"),
