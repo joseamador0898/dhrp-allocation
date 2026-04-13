@@ -8,6 +8,7 @@ from ..models.dhrp_layer import DHRPLayer
 from ..models.llm_dhrp_layer import LLMDHRPLayer
 from ..models.loss_functions import dhrp_loss
 from ..data.feature_engineering import build_dataset, make_features, DEFAULT_FDIM
+from ..data.universe_config import get_universe_config
 
 
 def _set_seed(seed):
@@ -120,6 +121,7 @@ def train_llm_dhrp(
     fdim=DEFAULT_FDIM,
     seed=42,
     train_end=None,
+    universe=None,
 ):
     """Train LLM-enhanced DHRP model.
 
@@ -145,12 +147,25 @@ def train_llm_dhrp(
         trained LLMDHRPLayer model
     """
     _set_seed(seed)
-    X, S, R, H = build_dataset(prices, is_em=is_em, volume=volume, fdim=fdim,
-                                train_end=train_end)
+    # Resolve per-universe overrides (lookback, text LR, gate bias, dropout,
+    # HRP schedule, tree depth). When `universe` is None the defaults match
+    # current DM/EM hard-coded behavior, so existing callers are unaffected.
+    cfg = get_universe_config(universe)
+    lookback = cfg.get("lookback_window", 252)
+    text_lr_scale = cfg.get("text_lr_scale", 0.3)
+    modality_dropout = cfg.get("modality_dropout", 0.2)
+    gate_bias_init = cfg.get("gate_bias_init", -2.0)
+    if universe is not None:
+        hrp_lam_start = cfg.get("hrp_lam_start", hrp_lam_start)
+        hrp_lam_end = cfg.get("hrp_lam_end", hrp_lam_end)
+        depth = cfg.get("tree_depth", depth)
+
+    X, S, R, H = build_dataset(prices, window=lookback, is_em=is_em,
+                                volume=volume, fdim=fdim, train_end=train_end)
     if X.ndim == 1 or X.shape[0] < 50:
         raise ValueError(f"Insufficient data: {X.shape[0] if X.ndim > 1 else 0}")
     n_samp, fdim_actual, n_assets = X.shape[0], X.shape[1], prices.shape[1]
-    mkt = "EM" if is_em else "DM"
+    mkt = universe if universe else ("EM" if is_em else "DM")
     print(f"  [{mkt}] {n_samp} samples, {n_assets} assets, fdim={fdim_actual} (LLM-DHRP)")
 
     # Prepare text embeddings — average across assets for a global signal
@@ -182,6 +197,8 @@ def train_llm_dhrp(
         use_text=use_text and text_embs is not None,
         use_macro=use_macro and macro_feats is not None,
         macro_dim=macro_dim, fusion_type=fusion_type,
+        modality_dropout=modality_dropout,
+        gate_bias_init=gate_bias_init,
     ).to(device)
     n_params = sum(p.numel() for p in model.parameters())
     print(f"  [{mkt}] Model params: {n_params:,}")
@@ -197,7 +214,7 @@ def train_llm_dhrp(
             other_params.append(param)
     opt = optim.AdamW([
         {"params": other_params, "lr": lr},
-        {"params": text_params, "lr": lr * 0.3},  # text learns 3x slower
+        {"params": text_params, "lr": lr * text_lr_scale},
     ], weight_decay=weight_decay)
     sched = optim.lr_scheduler.CosineAnnealingLR(opt, T_max=epochs, eta_min=lr / 20)
 

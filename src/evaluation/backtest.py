@@ -15,6 +15,7 @@ from ..models.baselines import (
     risk_parity, max_diversification, ledoit_wolf_cov,
 )
 from ..training.trainer import dhrp_weights
+from ..data.universe_config import get_universe_config
 
 # Default backtest parameters
 TRAIN_DAYS = 252
@@ -48,6 +49,7 @@ def rolling_backtest(
     purge_days=PURGE_DAYS,
     return_weights=False,
     oos_start=None,
+    universe=None,
 ):
     """Run rolling-window backtest over all methods.
 
@@ -91,6 +93,17 @@ def rolling_backtest(
         if ppo_model is not None:
             methods.append("PPO")
 
+    # Per-universe overrides: lookback, weekly rebalance, covariance shrinkage.
+    # When `universe` is None the function's own defaults / is_em branch are
+    # used, so existing callers behave identically.
+    if universe is not None:
+        cfg = get_universe_config(universe)
+        train_days = cfg.get("lookback_window", train_days)
+        step_days = cfg.get("rebalance_freq", step_days)
+        cov_shrinkage = cfg.get("cov_shrinkage", 0.001 if is_em else 1e-6)
+    else:
+        cov_shrinkage = 0.001 if is_em else 1e-6
+
     rets = prices.pct_change().dropna()
     results = []
     weights_history = []
@@ -124,7 +137,7 @@ def rolling_backtest(
             cov = ledoit_wolf_cov(train)
         except Exception:
             cov = train.cov().values * 252
-        cov = cov + np.eye(train.shape[1]) * (0.001 if is_em else 1e-6)
+        cov = cov + np.eye(train.shape[1]) * cov_shrinkage
         test = rets.iloc[t : t + test_days].fillna(0)
         if test.empty:
             rebalance_idx += 1

@@ -38,15 +38,16 @@ class CrossModalFusion(nn.Module):
     so the model must earn the right to use text signals.
     """
 
-    def __init__(self, feature_dim, n_heads=4, dropout=0.1):
+    def __init__(self, feature_dim, n_heads=4, dropout=0.1, gate_bias_init=-2.0):
         super().__init__()
         self.cross_attn = nn.MultiheadAttention(
             feature_dim, n_heads, dropout=dropout, batch_first=True,
         )
         self.gate_proj = nn.Linear(feature_dim * 2, feature_dim)
-        # Initialize gate bias to -2 so sigmoid ≈ 0.12 — text starts small
+        # Gate bias controls how much text is blended in at init.
+        # -2.0 → sigmoid≈0.12 (DM/EM default), -0.5 → ≈0.38 (commodities).
         nn.init.zeros_(self.gate_proj.weight)
-        nn.init.constant_(self.gate_proj.bias, -2.0)
+        nn.init.constant_(self.gate_proj.bias, gate_bias_init)
         self.norm = nn.LayerNorm(feature_dim)
         self.text_dropout = nn.Dropout(0.3)
 
@@ -99,6 +100,8 @@ class LLMDHRPLayer(nn.Module):
         macro_dim=4,
         fusion_type="cross_attention",
         dropout=0.1,
+        modality_dropout=0.2,
+        gate_bias_init=-2.0,
     ):
         super().__init__()
         self.n_assets = n_assets
@@ -107,6 +110,7 @@ class LLMDHRPLayer(nn.Module):
         self.is_em = is_em
         self.use_text = use_text
         self.use_macro = use_macro
+        self.modality_dropout = modality_dropout
         self.n_leaves = 2 ** depth
         self.n_internal = 2 ** depth - 1
         self.fusion_type = fusion_type
@@ -123,7 +127,10 @@ class LLMDHRPLayer(nn.Module):
                 text_dim, feature_dim, hidden_dim=hidden_dim * 2, dropout=dropout,
             )
             if fusion_type == "cross_attention":
-                self.fusion = CrossModalFusion(feature_dim, n_heads=4, dropout=dropout)
+                self.fusion = CrossModalFusion(
+                    feature_dim, n_heads=4, dropout=dropout,
+                    gate_bias_init=gate_bias_init,
+                )
             elif fusion_type == "concat":
                 self.fusion_proj = nn.Sequential(
                     nn.Linear(feature_dim * 2, feature_dim),
@@ -199,7 +206,7 @@ class LLMDHRPLayer(nn.Module):
         if self.use_text and text_emb is not None:
             # Modality dropout: randomly skip text during training
             use_text_now = True
-            if self.training and torch.rand(1).item() < 0.2:
+            if self.training and torch.rand(1).item() < self.modality_dropout:
                 use_text_now = False
 
             if use_text_now:
