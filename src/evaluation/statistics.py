@@ -20,9 +20,32 @@ def compute_stats(results, rf=0.03, n_boot=1000, gamma=2.5):
     Returns DataFrame with columns: Method, Sharpe, Sortino, Calmar, MaxDD,
     CVaR_5, VaR_5, Omega, CER, Ann_Return, Ann_Vol, HAC_t, CI_lo, CI_hi.
     """
+    # Defensive dedup: if rolling_backtest ever emits duplicate (method, date)
+    # rows (overlapping rebalance windows), average them so Sharpe /
+    # Ann_Return / MaxDD / cumulative plots aren't multiply-counted.
+    if "date" in results.columns and not results.empty:
+        dup_mask = results.duplicated(subset=["method", "date"], keep=False)
+        if dup_mask.any():
+            import warnings
+            n_dup = int(dup_mask.sum())
+            warnings.warn(
+                f"compute_stats: {n_dup} duplicate (method, date) rows detected; "
+                "averaging. This usually means rolling_backtest was run with "
+                "step_days < test_days. Expected to be zero after the "
+                "backtest.py fix — investigate if you see this.",
+                stacklevel=2,
+            )
+            results = (
+                results.groupby(["method", "date"], as_index=False)["return"].mean()
+            )
+
     stats = []
     for m in sorted(results["method"].unique()):
-        r = results[results["method"] == m]["return"].dropna().values
+        r = (
+            results[results["method"] == m]
+            .sort_values("date")["return"] if "date" in results.columns
+            else results[results["method"] == m]["return"]
+        ).dropna().values
         if len(r) == 0:
             continue
         exc = r - rf / 252

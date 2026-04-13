@@ -35,9 +35,17 @@ METHOD_LABELS = {
 
 
 def get_series(res, m):
-    """Extract a return series for a single method."""
-    df = res[res["method"] == m].sort_values("date")
-    return pd.Series(df["return"].values, index=pd.to_datetime(df["date"].values))
+    """Extract a return series for a single method.
+
+    Defensively averages duplicate (method, date) rows so cumulative-return
+    plots never compound the same day twice. With the post-fix
+    rolling_backtest this is a no-op.
+    """
+    df = res[res["method"] == m]
+    if df.empty:
+        return pd.Series(dtype=float)
+    df = df.groupby("date", as_index=True)["return"].mean().sort_index()
+    return pd.Series(df.values, index=pd.to_datetime(df.index))
 
 
 def plot_cumulative(results_dict, output_dir="results/figures"):
@@ -74,7 +82,8 @@ def plot_sharpe_bars(results_dict, output_dir="results/figures"):
         methods_present = sorted(res["method"].unique())
         sharpes = []
         for m in methods_present:
-            r = res[res["method"] == m]["return"].values
+            # Dedup duplicate dates (see get_series rationale)
+            r = get_series(res, m).values
             exc = r - 0.03 / 252
             sr = exc.mean() * 252 / (exc.std() * np.sqrt(252)) if exc.std() > 0 else 0
             sharpes.append(sr)

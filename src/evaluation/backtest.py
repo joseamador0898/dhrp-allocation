@@ -138,7 +138,14 @@ def rolling_backtest(
         except Exception:
             cov = train.cov().values * 252
         cov = cov + np.eye(train.shape[1]) * cov_shrinkage
-        test = rets.iloc[t : t + test_days].fillna(0)
+        # Record only until the next rebalance fires, so each OOS date
+        # appears exactly once per method. Prevents duplicate-date
+        # inflation of Sharpe / annualized return / cumulative plots
+        # when step_days < test_days (e.g. Commodities: step=5, test=21).
+        # When step_days >= test_days this is a no-op (preserves legacy
+        # behavior for DM and EM).
+        record_days = min(test_days, step_days)
+        test = rets.iloc[t : t + record_days].fillna(0)
         if test.empty:
             rebalance_idx += 1
             continue
@@ -181,8 +188,12 @@ def rolling_backtest(
                     tc_drag = turnover * transaction_cost_bps / 10000
                 prev_weights[m] = w.copy()
 
-                for i, r in enumerate((test.values @ w).flatten()):
-                    adj_r = float(r) - (tc_drag / test_days if i == 0 else 0)
+                daily_rs = (test.values @ w).flatten()
+                n_days = len(daily_rs)
+                for i, r in enumerate(daily_rs):
+                    # Amortize tc drag over the days actually recorded,
+                    # not the full test_days (which may exceed step_days).
+                    adj_r = float(r) - (tc_drag / max(n_days, 1) if i == 0 else 0)
                     results.append({"method": m, "date": test.index[i], "return": adj_r})
             except Exception:
                 pass
