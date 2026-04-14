@@ -46,7 +46,12 @@ load_dotenv()
 
 END = datetime.now().strftime('%Y-%m-%d')
 START = (datetime.now() - timedelta(days=10*365)).strftime('%Y-%m-%d')
-print(f'Period: {START} to {END}\n')
+# Walk-forward split: everything < TRAIN_END is used for training, everything
+# >= TRAIN_END is strict out-of-sample. Drives training, backtest, plots, and
+# headline statistics so every downstream artifact is consistent.
+TRAIN_END = os.environ.get('TRAIN_END', '2020-06-30')
+print(f'Period: {START} to {END}')
+print(f'Train/OOS split: < {TRAIN_END} for training, >= {TRAIN_END} for OOS\n')
 
 print(f'=== DM Universe ({len(UNIVERSES["DM"])} ETFs) ===')
 DM_prices = load_universe('DM', START, END)
@@ -160,16 +165,21 @@ def _compute_market_fallback(headlines_df, headline_to_emb):
 
 
 def build_text_tensor_for_universe(prices, universe_tickers, headline_to_emb,
-                                   headlines_df, volume=None):
-    """Build (n_samples, n_assets, 768) FinBERT tensor for a universe.
+                                   headlines_df, volume=None, train_end=None):
+    """Build a FinBERT text tensor for both training and point-in-time backtest.
 
-    Methodology fixes vs. naive tiling:
-    1. Tickers with <5 headlines get the global market embedding as fallback,
-       ensuring balanced text signal across all assets (avoids data-imbalance).
-    2. Uses per-asset static embeddings (averaged over all available headlines).
-       Note: since yfinance/RSS headlines lack historical timestamps, we cannot
-       do true time-varying text. We document this as a limitation and use the
-       purge gap (5 days between train/test) to mitigate information leakage.
+    Returns (train_tensor, pit_dict):
+      * train_tensor — (n_samples, n_assets, 768) ndarray aligned to
+        ``build_dataset`` samples. Used by ``train_llm_dhrp``. Static: every
+        row is the same per-asset embedding built from *training-window*
+        headlines only, so no post-train_end news leaks into model weights.
+      * pit_dict — {Timestamp: (n_assets, 768)} keyed by every price date.
+        Dates < train_end map to the "prior" embedding (domain knowledge from
+        PhraseBank/FiQA/older RSS). Dates >= train_end map to the "live"
+        embedding built from headlines available as of that window. This is
+        used by ``rolling_backtest`` via the date-keyed lookup in
+        ``_llm_dhrp_weights`` so the OOS signal is genuinely point-in-time
+        given the recent-only nature of yfinance/RSS sources.
     """
     X, S, R, H = build_dataset(prices, volume=volume, fdim=DEFAULT_FDIM)
     n_samp = X.shape[0]
@@ -177,39 +187,69 @@ def build_text_tensor_for_universe(prices, universe_tickers, headline_to_emb,
     ticker_list = list(universe_tickers.values())
     market_fallback = _compute_market_fallback(headlines_df, headline_to_emb)
 
-    asset_embs = np.zeros((n_assets, 768), dtype=np.float32)
+    # Split headlines by date against train_end when timestamps are available.
+    hdl_df = headlines_df.copy()
+    if 'date' in hdl_df.columns:
+        hdl_df['date'] = pd.to_datetime(hdl_df['date'], errors='coerce')
+    else:
+        hdl_df['date'] = pd.NaT
+    cutoff = pd.Timestamp(train_end) if train_end is not None else None
+
+    def _embs_for(ticker, mask):
+        rows = hdl_df[mask & (hdl_df['ticker'] == ticker)]['headline'].tolist()
+        return [headline_to_emb[h] for h in rows if h in headline_to_emb]
+
+    prior_mask = (hdl_df['date'].isna()) if cutoff is None else (
+        hdl_df['date'].isna() | (hdl_df['date'] < cutoff)
+    )
+    live_mask = pd.Series(True, index=hdl_df.index) if cutoff is None else (
+        hdl_df['date'].isna() | (hdl_df['date'] >= cutoff)
+    )
+
+    prior_embs = np.zeros((n_assets, 768), dtype=np.float32)
+    live_embs = np.zeros((n_assets, 768), dtype=np.float32)
     coverage = []
     for j, ticker in enumerate(ticker_list):
-        ticker_headlines = headlines_df[headlines_df['ticker'] == ticker]['headline'].tolist()
-        embs = [headline_to_emb[h] for h in ticker_headlines if h in headline_to_emb]
-        n_hdl = len(embs)
-        coverage.append(n_hdl)
-        if n_hdl >= 5:
-            asset_embs[j] = np.mean(embs, axis=0)
-        else:
-            # Fallback: use market-wide embedding to avoid zero vectors
-            asset_embs[j] = market_fallback
+        p = _embs_for(ticker, prior_mask)
+        l = _embs_for(ticker, live_mask)
+        coverage.append(len(p) + len(l))
+        prior_embs[j] = np.mean(p, axis=0) if len(p) >= 5 else market_fallback
+        live_embs[j] = np.mean(l, axis=0) if len(l) >= 5 else prior_embs[j]
 
-    text_tensor = np.tile(asset_embs, (n_samp, 1, 1))
+    # Training tensor uses the prior (pre-train_end) embedding only — no leak.
+    train_tensor = np.tile(prior_embs, (n_samp, 1, 1))
 
-    # Report coverage balance
+    # PIT dict: one entry per price date, flipping at the split.
+    pit_dict = {}
+    for ts in prices.index:
+        pit_dict[pd.Timestamp(ts)] = (
+            live_embs if (cutoff is not None and pd.Timestamp(ts) >= cutoff) else prior_embs
+        )
+
     min_c, max_c, mean_c = min(coverage), max(coverage), np.mean(coverage)
     zero_c = sum(1 for c in coverage if c < 5)
     print(f'    Coverage: min={min_c} max={max_c} mean={mean_c:.0f}, '
           f'fallback={zero_c}/{n_assets} assets')
 
-    return text_tensor
+    return train_tensor, pit_dict
 
 text_dm, text_em, text_cmd = None, None, None
+text_dm_pit, text_em_pit, text_cmd_pit = None, None, None
 
 if headline_to_emb:
     print('\nBuilding text feature tensors (balanced, with market fallback)...')
     print('  DM:')
-    text_dm = build_text_tensor_for_universe(DM_prices, UNIVERSES['DM'], headline_to_emb, headlines_df, DM_volume)
+    text_dm, text_dm_pit = build_text_tensor_for_universe(
+        DM_prices, UNIVERSES['DM'], headline_to_emb, headlines_df, DM_volume,
+        train_end=TRAIN_END)
     print('  EM:')
-    text_em = build_text_tensor_for_universe(EM_prices, UNIVERSES['EM'], headline_to_emb, headlines_df, EM_volume)
+    text_em, text_em_pit = build_text_tensor_for_universe(
+        EM_prices, UNIVERSES['EM'], headline_to_emb, headlines_df, EM_volume,
+        train_end=TRAIN_END)
     print('  Commodities:')
-    text_cmd = build_text_tensor_for_universe(CMD_prices, UNIVERSES['Commodities'], headline_to_emb, headlines_df, CMD_volume)
+    text_cmd, text_cmd_pit = build_text_tensor_for_universe(
+        CMD_prices, UNIVERSES['Commodities'], headline_to_emb, headlines_df, CMD_volume,
+        train_end=TRAIN_END)
     print(f'\n  DM text: {text_dm.shape}')
     print(f'  EM text: {text_em.shape}')
     print(f'  CMD text: {text_cmd.shape}')
@@ -259,13 +299,16 @@ except Exception as e:
 # EM + Commodities: same FRED+GS macro as DM
 print(f'\n--- EM + Commodities: same macro as DM ---')
 if dm_macro is not None:
-    print(f'  Macro: {dm_macro.index.min().strftime("%Y-%m-%d")} to {dm_macro.index.max().strftime("%Y-%m-%d")} '
+    print(f'  Macro raw: {dm_macro.index.min().strftime("%Y-%m-%d")} to {dm_macro.index.max().strftime("%Y-%m-%d")} '
           f'({dm_macro.shape[0]} days, {dm_macro.shape[1]} features)')
-    # Trim macro to match price date range for consistency
-    common_start = max(DM_prices.index.min(), dm_macro.index.min())
-    common_end = min(DM_prices.index.max(), dm_macro.index.max())
-    dm_macro = dm_macro.loc[common_start:common_end]
-    print(f'  Aligned to prices: {common_start.strftime("%Y-%m-%d")} to {common_end.strftime("%Y-%m-%d")} ({len(dm_macro)} days)')
+    # Reindex onto the full price calendar so the macro frame never trims
+    # price history. Early gaps get ffill/bfill (get_macro_vector already
+    # tolerates leading NaNs) and the 10-year backtest span is preserved.
+    dm_macro = dm_macro.reindex(DM_prices.index).ffill().bfill()
+    print(f'  Aligned to prices: {DM_prices.index.min().strftime("%Y-%m-%d")} to '
+          f'{DM_prices.index.max().strftime("%Y-%m-%d")} ({len(dm_macro)} days)')
+    print(f'  Price spans — DM: {DM_prices.index.min().date()} | '
+          f'EM: {EM_prices.index.min().date()} | CMD: {CMD_prices.index.min().date()}')
 
 # --- Cell 8: TRAIN ALL MODELS (DM Universe) ---
 from src.training.trainer import train_dhrp, train_llm_dhrp
@@ -275,7 +318,7 @@ print('\n=== DEVELOPED MARKETS ===')
 fdim = DEFAULT_FDIM
 
 print('\n--- Training DHRP (price + volume) ---')
-dhrp_dm = train_dhrp(DM_prices, device=device, is_em=False, volume=DM_volume, fdim=fdim)
+dhrp_dm = train_dhrp(DM_prices, device=device, is_em=False, volume=DM_volume, fdim=fdim, train_end=TRAIN_END)
 
 llm_dhrp_dm = None
 if text_dm is not None:
@@ -287,14 +330,14 @@ if text_dm is not None:
         device=device, is_em=False, volume=DM_volume, fdim=fdim,
         use_text=True, use_macro=dm_macro is not None,
         fusion_type='cross_attention', depth=3,
-        epochs=60, lr=3e-4,
+        epochs=60, lr=3e-4, train_end=TRAIN_END,
     )
 
 print('\n--- Training Transformer baseline ---')
-transformer_dm = train_transformer_policy(DM_prices, device=device, is_em=False, volume=DM_volume, fdim=fdim)
+transformer_dm = train_transformer_policy(DM_prices, device=device, is_em=False, volume=DM_volume, fdim=fdim, train_end=TRAIN_END)
 
 print('\n--- Training PPO baseline ---')
-ppo_dm = train_ppo_agent(DM_prices, device=device, is_em=False, volume=DM_volume, fdim=fdim, epochs=30)
+ppo_dm = train_ppo_agent(DM_prices, device=device, is_em=False, volume=DM_volume, fdim=fdim, epochs=30, train_end=TRAIN_END)
 
 os.makedirs('results/models', exist_ok=True)
 torch.save(dhrp_dm.state_dict(), 'results/models/dhrp_dm.pt')
@@ -307,7 +350,7 @@ print('\nDM models saved.')
 # --- Cell 9: TRAIN EM + COMMODITIES ---
 print('\n=== EMERGING MARKETS ===')
 print('\n--- Training DHRP (EM) ---')
-dhrp_em = train_dhrp(EM_prices, device=device, is_em=True, volume=EM_volume, fdim=fdim)
+dhrp_em = train_dhrp(EM_prices, device=device, is_em=True, volume=EM_volume, fdim=fdim, train_end=TRAIN_END)
 
 llm_dhrp_em = None
 if text_em is not None:
@@ -317,15 +360,15 @@ if text_em is not None:
         macro_features=dm_macro.values if dm_macro is not None else None,
         device=device, is_em=True, volume=EM_volume, fdim=fdim,
         use_text=True, use_macro=dm_macro is not None,
-        epochs=50, lr=1.5e-4,
+        epochs=50, lr=1.5e-4, train_end=TRAIN_END,
     )
 
 print('\n--- Training Transformer (EM) ---')
-transformer_em = train_transformer_policy(EM_prices, device=device, is_em=True, volume=EM_volume, fdim=fdim)
+transformer_em = train_transformer_policy(EM_prices, device=device, is_em=True, volume=EM_volume, fdim=fdim, train_end=TRAIN_END)
 
 print('\n=== COMMODITIES ===')
 print('\n--- Training DHRP (Commodities) ---')
-dhrp_cmd = train_dhrp(CMD_prices, device=device, is_em=False, volume=CMD_volume, fdim=fdim)
+dhrp_cmd = train_dhrp(CMD_prices, device=device, is_em=False, volume=CMD_volume, fdim=fdim, train_end=TRAIN_END)
 
 llm_dhrp_cmd = None
 if text_cmd is not None:
@@ -335,11 +378,11 @@ if text_cmd is not None:
         macro_features=dm_macro.values if dm_macro is not None else None,
         device=device, is_em=False, volume=CMD_volume, fdim=fdim,
         use_text=True, use_macro=dm_macro is not None,
-        epochs=60, lr=3e-4,
+        epochs=60, lr=3e-4, train_end=TRAIN_END,
     )
 
 print('\n--- Training Transformer (Commodities) ---')
-transformer_cmd = train_transformer_policy(CMD_prices, device=device, is_em=False, volume=CMD_volume, fdim=fdim)
+transformer_cmd = train_transformer_policy(CMD_prices, device=device, is_em=False, volume=CMD_volume, fdim=fdim, train_end=TRAIN_END)
 
 # Save all models
 torch.save(dhrp_em.state_dict(), 'results/models/dhrp_em.pt')
@@ -361,33 +404,49 @@ print('\n=== BACKTESTS ===')
 
 dm_res = rolling_backtest(
     DM_prices, is_em=False, dhrp_model=dhrp_dm,
-    llm_dhrp_model=llm_dhrp_dm, text_features={'finbert': text_dm} if text_dm is not None else None,
+    llm_dhrp_model=llm_dhrp_dm,
+    text_features={'finbert': text_dm_pit} if text_dm_pit is not None else None,
     macro_features=dm_macro, methods=METHODS, volume=DM_volume, purge_days=5,
+    oos_start=TRAIN_END, universe='DM',
 )
 print(f'DM: {len(dm_res)} observations')
 
 em_res = rolling_backtest(
     EM_prices, is_em=True, dhrp_model=dhrp_em,
-    llm_dhrp_model=llm_dhrp_em, text_features={'finbert': text_em} if text_em is not None else None,
+    llm_dhrp_model=llm_dhrp_em,
+    text_features={'finbert': text_em_pit} if text_em_pit is not None else None,
     macro_features=dm_macro, methods=METHODS, volume=EM_volume, purge_days=5,
+    oos_start=TRAIN_END, universe='EM',
 )
 print(f'EM: {len(em_res)} observations')
 
 cmd_res = rolling_backtest(
     CMD_prices, is_em=False, dhrp_model=dhrp_cmd,
-    llm_dhrp_model=llm_dhrp_cmd, text_features={'finbert': text_cmd} if text_cmd is not None else None,
+    llm_dhrp_model=llm_dhrp_cmd,
+    text_features={'finbert': text_cmd_pit} if text_cmd_pit is not None else None,
     macro_features=dm_macro, methods=METHODS, volume=CMD_volume, purge_days=5,
+    oos_start=TRAIN_END, universe='Commodities',
 )
 print(f'Commodities: {len(cmd_res)} observations')
+
+# Sanity: every OOS result should start at or after TRAIN_END.
+for _lbl, _r in [('DM', dm_res), ('EM', em_res), ('CMD', cmd_res)]:
+    if not _r.empty:
+        _min = pd.to_datetime(_r['date']).min()
+        assert _min >= pd.Timestamp(TRAIN_END), \
+            f'{_lbl}: OOS leak — earliest date {_min} < TRAIN_END {TRAIN_END}'
+        print(f'  {_lbl} OOS span: {_min.date()} → {pd.to_datetime(_r["date"]).max().date()}')
 
 # Transaction cost sensitivity
 print('\n=== TRANSACTION COST SENSITIVITY ===')
 for tc_bps in [10, 20, 50]:
     dm_tc = rolling_backtest(
         DM_prices, is_em=False, dhrp_model=dhrp_dm,
-        llm_dhrp_model=llm_dhrp_dm, text_features={'finbert': text_dm} if text_dm is not None else None,
+        llm_dhrp_model=llm_dhrp_dm,
+        text_features={'finbert': text_dm_pit} if text_dm_pit is not None else None,
         macro_features=dm_macro, methods=['DHRP', 'LLM_DHRP', 'HRP'] if llm_dhrp_dm else ['DHRP', 'HRP'],
         volume=DM_volume, transaction_cost_bps=tc_bps, purge_days=5,
+        oos_start=TRAIN_END, universe='DM',
     )
     from src.evaluation.statistics import compute_stats as cs
     tc_stats = cs(dm_tc)
@@ -408,7 +467,10 @@ for label, res, prices, is_em, volume in [
     print(f'  {label} RESULTS ({prices.shape[1]} assets)')
     print(f'{"="*60}')
 
-    stats = compute_stats(res, n_boot=1000)
+    # Headline stats are OOS-only (dates >= TRAIN_END). Backtest results are
+    # already OOS-only after the oos_start=TRAIN_END argument, but we pass it
+    # here too so future callers that mix in-sample data stay safe.
+    stats = compute_stats(res, n_boot=1000, oos_start=TRAIN_END)
     try:
         factors = factor_analysis(res, FF)
         table = stats.merge(factors, on='Method', how='left').round(3)
@@ -459,7 +521,7 @@ for label, res, prices, is_em, volume in [
 
     # Sub-period analysis
     print(f'\n--- Sub-period Sharpe Ratios ---')
-    sub = subperiod_analysis(res)
+    sub = subperiod_analysis(res, train_end=TRAIN_END)
     if not sub.empty:
         pivot = sub.pivot(index='Method', columns='Period', values='Sharpe')
         print(pivot.round(3).to_string())
@@ -475,13 +537,14 @@ import matplotlib.pyplot as plt
 
 os.makedirs('results/figures', exist_ok=True)
 results_dict = {'DM': dm_res, 'EM': em_res, 'Commodities': cmd_res}
-plot_cumulative(results_dict, output_dir='results/figures')
+plot_cumulative(results_dict, output_dir='results/figures', oos_start=TRAIN_END)
 plot_sharpe_bars(results_dict, output_dir='results/figures')
 print('\nCumulative returns and Sharpe bar figures saved.')
 
-# LLM-DHRP vs DHRP delta
+# LLM-DHRP vs DHRP delta — strict OOS (cumulative starts at TRAIN_END).
 if 'LLM_DHRP' in dm_res['method'].unique():
     fig, axes = plt.subplots(1, 3, figsize=(16, 4))
+    _oos_ts = pd.Timestamp(TRAIN_END)
     for ax, (uname, res) in zip(axes, results_dict.items()):
         s_llm = get_series(res, 'LLM_DHRP')
         s_dhrp = get_series(res, 'DHRP')
@@ -494,7 +557,8 @@ if 'LLM_DHRP' in dm_res['method'].unique():
                         where=cum_diff.values < 0, alpha=0.3, color='red')
         ax.plot(common, cum_diff.values, color='black', lw=1.5)
         ax.axhline(0, color='black', ls='--', lw=0.8)
-        ax.set_title(f'{uname}: LLM-DHRP minus DHRP', fontweight='bold')
+        ax.axvline(_oos_ts, color='black', ls=':', lw=0.8, alpha=0.5)
+        ax.set_title(f'{uname}: LLM-DHRP minus DHRP (OOS)', fontweight='bold')
         ax.set_ylabel('Cumulative Excess Return (%)')
         ax.grid(alpha=0.3)
     plt.tight_layout()

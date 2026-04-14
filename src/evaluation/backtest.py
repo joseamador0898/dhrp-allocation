@@ -104,7 +104,10 @@ def rolling_backtest(
     else:
         cov_shrinkage = 0.001 if is_em else 1e-6
 
-    rets = prices.pct_change().dropna()
+    # dropna(how="all") keeps the full 10-year span even if one asset has a
+    # late inception (e.g. CPER in Commodities). Per-asset NaNs are zeroed by
+    # the .fillna(0) on the train/test slices below.
+    rets = prices.pct_change().dropna(how="all")
     results = []
     weights_history = []
     prev_weights = {}
@@ -307,10 +310,25 @@ def _llm_dhrp_weights(
 
         text_emb = None
         if text_features is not None and model.use_text:
-            if "finbert" in text_features and text_features["finbert"] is not None:
-                if rebalance_idx < len(text_features["finbert"]):
-                    text_emb = text_features["finbert"][rebalance_idx].mean(axis=0)
-                    text_emb = torch.from_numpy(text_emb.astype(np.float32)).to(device)
+            fb = text_features.get("finbert") if isinstance(text_features, dict) else None
+            if fb is not None:
+                emb = None
+                # Date-keyed PIT lookup: dict[Timestamp, (n_assets, 768)].
+                # Use the most recent prior date to enforce point-in-time.
+                if isinstance(fb, dict):
+                    if rebalance_date is not None:
+                        ts = pd.Timestamp(rebalance_date)
+                        prior = [k for k in fb.keys() if pd.Timestamp(k) <= ts]
+                        if prior:
+                            emb = fb[max(prior)]
+                # Legacy positional ndarray: (n_rebalance, n_assets, 768).
+                elif rebalance_idx < len(fb):
+                    emb = fb[rebalance_idx]
+                if emb is not None:
+                    emb = np.asarray(emb)
+                    if emb.ndim == 2:
+                        emb = emb.mean(axis=0)
+                    text_emb = torch.from_numpy(emb.astype(np.float32)).to(device)
 
         macro_feat = None
         if macro_features is not None and model.use_macro and rebalance_date is not None:

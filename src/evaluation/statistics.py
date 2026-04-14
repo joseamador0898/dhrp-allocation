@@ -14,12 +14,18 @@ def compute_sharpe(r, rf=0.03):
     return (exc.mean() * 252) / (exc.std() * np.sqrt(252)) if exc.std() > 0 else 0
 
 
-def compute_stats(results, rf=0.03, n_boot=1000, gamma=2.5):
+def compute_stats(results, rf=0.03, n_boot=1000, gamma=2.5, oos_start=None):
     """Compute comprehensive performance metrics for each method.
+
+    If ``oos_start`` is provided, restrict metrics to dates >= oos_start so
+    headline numbers reflect strict out-of-sample performance.
 
     Returns DataFrame with columns: Method, Sharpe, Sortino, Calmar, MaxDD,
     CVaR_5, VaR_5, Omega, CER, Ann_Return, Ann_Vol, HAC_t, CI_lo, CI_hi.
     """
+    if oos_start is not None and "date" in results.columns and not results.empty:
+        cutoff = pd.Timestamp(oos_start)
+        results = results[pd.to_datetime(results["date"]) >= cutoff]
     # Defensive dedup: if rolling_backtest ever emits duplicate (method, date)
     # rows (overlapping rebalance windows), average them so Sharpe /
     # Ann_Return / MaxDD / cumulative plots aren't multiply-counted.
@@ -426,8 +432,12 @@ def full_statistical_battery(results, ref="DHRP", rf=0.03, n_boot=1000):
 # Regime / sub-period analysis
 # ---------------------------------------------------------------------------
 
-def subperiod_analysis(results, rf=0.03, gamma=2.5):
+def subperiod_analysis(results, rf=0.03, gamma=2.5, train_end=None):
     """Compute comprehensive metrics per macro regime.
+
+    When ``train_end`` is provided, always emit an "OOS Full" row covering
+    ``train_end`` through the end of the data so the OOS window is visible
+    even if none of the legacy regime buckets line up with the split.
 
     Returns DataFrame with columns [Method, Period, Sharpe, Sortino, MaxDD, CVaR_5, N].
     """
@@ -438,6 +448,10 @@ def subperiod_analysis(results, rf=0.03, gamma=2.5):
         "Rate Hikes (2022 to 2023-H1)": ("2022-01-01", "2023-06-30"),
         "Post-Hike (2023-H2+)": ("2023-07-01", "2099-12-31"),
     }
+    if train_end is not None:
+        periods[f"OOS Full ({pd.Timestamp(train_end).strftime('%Y-%m-%d')}+)"] = (
+            pd.Timestamp(train_end).strftime("%Y-%m-%d"), "2099-12-31",
+        )
     rows = []
     for m in sorted(results["method"].unique()):
         ser = results[results["method"] == m].set_index("date")["return"]

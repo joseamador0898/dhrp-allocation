@@ -48,12 +48,17 @@ def get_series(res, m):
     return pd.Series(df.values, index=pd.to_datetime(df.index))
 
 
-def plot_cumulative(results_dict, output_dir="results/figures"):
-    """Plot cumulative returns for multiple universes."""
+def plot_cumulative(results_dict, output_dir="results/figures", oos_start=None):
+    """Plot cumulative returns for multiple universes.
+
+    If oos_start is provided, shade the in-sample region and mark the OOS
+    boundary with a dashed vertical line.
+    """
     os.makedirs(output_dir, exist_ok=True)
     fig, axes = plt.subplots(1, len(results_dict), figsize=(6 * len(results_dict), 5))
     if len(results_dict) == 1:
         axes = [axes]
+    oos_ts = pd.Timestamp(oos_start) if oos_start is not None else None
     for ax, (uname, res) in zip(axes, results_dict.items()):
         for m in sorted(res["method"].unique()):
             s = get_series(res, m)
@@ -66,6 +71,9 @@ def plot_cumulative(results_dict, output_dir="results/figures"):
         ax.set_yscale("log")
         ax.grid(alpha=0.3)
         ax.set_ylabel("Cumulative Return (log)")
+        if oos_ts is not None:
+            ax.axvspan(ax.get_xlim()[0], oos_ts, alpha=0.08, color="gray", zorder=0)
+            ax.axvline(oos_ts, color="black", ls="--", lw=1.0, alpha=0.6)
     axes[0].legend(fontsize=7, loc="upper left")
     plt.tight_layout()
     plt.savefig(f"{output_dir}/cumulative_returns.png", dpi=300, bbox_inches="tight")
