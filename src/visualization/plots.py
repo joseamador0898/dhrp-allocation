@@ -60,9 +60,14 @@ def plot_cumulative(results_dict, output_dir="results/figures", oos_start=None):
         axes = [axes]
     oos_ts = pd.Timestamp(oos_start) if oos_start is not None else None
     for ax, (uname, res) in zip(axes, results_dict.items()):
+        data_xmin = None
         for m in sorted(res["method"].unique()):
             s = get_series(res, m)
+            if s.empty:
+                continue
             cum = (1 + s).cumprod()
+            first = cum.index.min()
+            data_xmin = first if data_xmin is None else min(data_xmin, first)
             lw = 2.5 if m in ["LLM_DHRP", "DHRP"] else 1.0
             color = METHOD_COLORS.get(m, "gray")
             ax.plot(cum.index, cum.values, label=METHOD_LABELS.get(m, m),
@@ -71,8 +76,11 @@ def plot_cumulative(results_dict, output_dir="results/figures", oos_start=None):
         ax.set_yscale("log")
         ax.grid(alpha=0.3)
         ax.set_ylabel("Cumulative Return (log)")
-        if oos_ts is not None:
-            ax.axvspan(ax.get_xlim()[0], oos_ts, alpha=0.08, color="gray", zorder=0)
+        if oos_ts is not None and data_xmin is not None:
+            # Use Timestamps on both ends; ax.get_xlim() returns mpl date-floats
+            # which matplotlib refuses to subtract from a Timestamp on newer
+            # versions (observed on Colab matplotlib 3.x).
+            ax.axvspan(data_xmin, oos_ts, alpha=0.08, color="gray", zorder=0)
             ax.axvline(oos_ts, color="black", ls="--", lw=1.0, alpha=0.6)
     axes[0].legend(fontsize=7, loc="upper left")
     plt.tight_layout()
