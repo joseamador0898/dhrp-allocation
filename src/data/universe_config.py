@@ -15,12 +15,14 @@ UNIVERSE_DATA_CONFIG = {
         "use_text": True,
         "use_macro": True,
         "macro_source": "fred_us",
-        # Training / backtest knobs — current defaults preserved
         "lookback_window": 252,
         "rebalance_freq": 21,
-        "text_lr_scale": 0.3,
-        "modality_dropout": 0.2,
-        "gate_bias_init": -2.0,
+        # Relaxed text suppression: gate_bias -1.0 → sigmoid≈0.27 (was -2.0 → 0.12)
+        # Higher text_lr_scale so text pathway can actually learn signal
+        # Lower modality_dropout so text is seen more often during training
+        "text_lr_scale": 0.5,
+        "modality_dropout": 0.1,
+        "gate_bias_init": -1.0,
         "hrp_lam_start": 0.3,
         "hrp_lam_end": 0.05,
         "cov_shrinkage": 1e-6,
@@ -32,9 +34,9 @@ UNIVERSE_DATA_CONFIG = {
         "macro_source": "fred_us",
         "lookback_window": 252,
         "rebalance_freq": 21,
-        "text_lr_scale": 0.3,
-        "modality_dropout": 0.2,
-        "gate_bias_init": -2.0,
+        "text_lr_scale": 0.5,
+        "modality_dropout": 0.1,
+        "gate_bias_init": -1.0,
         "hrp_lam_start": 0.3,
         "hrp_lam_end": 0.05,
         "cov_shrinkage": 0.001,  # matches backtest.py is_em branch

@@ -317,7 +317,7 @@ class LLMDHRPLayer(nn.Module):
             t = text_feat.unsqueeze(0).unsqueeze(0) if text_feat.dim() == 1 else text_feat.unsqueeze(1)
             attn_out, attn_weights = self.fusion.cross_attn(p, t, t)
             attn_out = attn_out.squeeze(1).squeeze(0) if price_feat.dim() == 1 else attn_out.squeeze(1)
-            gate_val = self.fusion.gate(torch.cat([price_feat, attn_out], dim=-1))
+            gate_val = torch.sigmoid(self.fusion.gate_proj(torch.cat([price_feat, attn_out], dim=-1)))
             return {
                 "gate_mean": gate_val.mean().item(),
                 "gate_std": gate_val.std().item(),

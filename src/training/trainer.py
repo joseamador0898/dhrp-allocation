@@ -43,6 +43,9 @@ def train_dhrp(prices, device="cpu", is_em=False, volume=None, fdim=DEFAULT_FDIM
     St = torch.from_numpy(S).to(device)
     Rt = torch.from_numpy(R).to(device)
 
+    # Turnover penalty ramps up over training to encourage stable weights
+    lam_turnover = 0.05 if not is_em else 0.02
+
     best_loss, best_st = float("inf"), None
     for ep in range(epochs):
         perm = torch.randperm(n_samp)
@@ -50,13 +53,17 @@ def train_dhrp(prices, device="cpu", is_em=False, volume=None, fdim=DEFAULT_FDIM
         Hs = H[perm.cpu().numpy()]
         ep_loss, nb = 0.0, 0
         lam = hrp_s - (hrp_s - hrp_e) * (ep / epochs)
+        # Ramp turnover penalty: 0 for first 20% of training, then linear to full
+        turnover_scale = max(0.0, (ep / epochs - 0.2) / 0.8)
 
+        prev_wts = None
         for s in range(0, n_samp, 32):
             e = min(s + 32, n_samp)
             opt.zero_grad()
             loss = dhrp_loss(
                 model, Xs[s:e], Ss[s:e], Rs[s:e], Hs[s:e],
                 is_em=is_em, lam_hrp=lam,
+                lam_turnover=lam_turnover * turnover_scale,
             )
             if not torch.isnan(loss) and loss.requires_grad:
                 loss.backward()
@@ -224,6 +231,9 @@ def train_llm_dhrp(
     Tt = torch.from_numpy(text_embs).to(device) if text_embs is not None else None
     Mt = torch.from_numpy(macro_feats.astype(np.float32)).to(device) if macro_feats is not None else None
 
+    # Turnover penalty ramps up over training
+    lam_turnover = 0.05 if not is_em else 0.02
+
     best_loss, best_st = float("inf"), None
     for ep in range(epochs):
         perm = torch.randperm(n_samp)
@@ -233,6 +243,7 @@ def train_llm_dhrp(
         Ms = Mt[perm] if Mt is not None else None
         ep_loss, nb = 0.0, 0
         lam = hrp_lam_start - (hrp_lam_start - hrp_lam_end) * (ep / epochs) if use_hrp_reg else 0.0
+        turnover_scale = max(0.0, (ep / epochs - 0.2) / 0.8)
 
         for s in range(0, n_samp, batch_size):
             e = min(s + batch_size, n_samp)
@@ -242,6 +253,7 @@ def train_llm_dhrp(
                 text_embs=Ts[s:e] if Ts is not None else None,
                 macro_feats=Ms[s:e] if Ms is not None else None,
                 is_em=is_em, lam_hrp=lam,
+                lam_turnover=lam_turnover * turnover_scale,
             )
             if not torch.isnan(loss) and loss.requires_grad:
                 loss.backward()
@@ -264,6 +276,206 @@ def train_llm_dhrp(
     return model
 
 
+def train_llm_dhrp_warmstart(
+    prices,
+    pretrained_dhrp,
+    text_features=None,
+    macro_features=None,
+    device="cpu",
+    is_em=False,
+    text_dim=768,
+    use_text=True,
+    use_macro=False,
+    macro_dim=4,
+    fusion_type="cross_attention",
+    epochs=40,
+    lr=1e-4,
+    batch_size=32,
+    grad_clip=0.5,
+    volume=None,
+    fdim=DEFAULT_FDIM,
+    seed=42,
+    train_end=None,
+    universe=None,
+):
+    """Train LLM-DHRP with warm-start: load pretrained DHRP weights, freeze
+    price pathway for first phase, then fine-tune everything with lower LR.
+
+    Phase 1 (60% of epochs): Only text/fusion params train
+    Phase 2 (40% of epochs): All params train with reduced LR
+
+    This prevents the text pathway from corrupting learned price signals.
+    """
+    _set_seed(seed)
+    cfg = get_universe_config(universe)
+    lookback = cfg.get("lookback_window", 252)
+    modality_dropout = cfg.get("modality_dropout", 0.1)  # Lower dropout for warmstart
+    gate_bias_init = cfg.get("gate_bias_init", -1.0)  # Less aggressive suppression
+
+    X, S, R, H = build_dataset(prices, window=lookback, is_em=is_em,
+                                volume=volume, fdim=fdim, train_end=train_end)
+    if X.ndim == 1 or X.shape[0] < 50:
+        raise ValueError(f"Insufficient data: {X.shape[0] if X.ndim > 1 else 0}")
+    n_samp, fdim_actual, n_assets = X.shape[0], X.shape[1], prices.shape[1]
+    mkt = universe if universe else ("EM" if is_em else "DM")
+    print(f"  [{mkt}] {n_samp} samples (warm-start LLM-DHRP)")
+
+    # Prepare text embeddings
+    text_embs = None
+    if use_text and text_features is not None:
+        if "finbert" in text_features and text_features["finbert"] is not None:
+            fb = text_features["finbert"]
+            n_text = min(fb.shape[0], n_samp)
+            text_embs = fb[:n_text].mean(axis=1)
+            if n_text < n_samp:
+                pad = np.zeros((n_samp - n_text, text_embs.shape[1]), dtype=np.float32)
+                text_embs = np.vstack([text_embs, pad])
+            print(f"  [{mkt}] Text features: {text_embs.shape}")
+
+    # Prepare macro features
+    macro_feats = None
+    if use_macro and macro_features is not None:
+        n_macro = min(macro_features.shape[0], n_samp)
+        macro_feats = macro_features[:n_macro]
+        if n_macro < n_samp:
+            pad = np.zeros((n_samp - n_macro, macro_feats.shape[1]), dtype=np.float32)
+            macro_feats = np.vstack([macro_feats, pad])
+        macro_dim = macro_feats.shape[1]
+
+    depth = cfg.get("tree_depth", 3)
+    hidden_dim_val = 64
+
+    model = LLMDHRPLayer(
+        n_assets=n_assets, feature_dim=fdim_actual, text_dim=text_dim,
+        hidden_dim=hidden_dim_val, depth=depth, is_em=is_em,
+        use_text=use_text and text_embs is not None,
+        use_macro=use_macro and macro_feats is not None,
+        macro_dim=macro_dim, fusion_type=fusion_type,
+        modality_dropout=modality_dropout,
+        gate_bias_init=gate_bias_init,
+    ).to(device)
+
+    # Transfer pretrained DHRP weights (shared params: leaf_assign, gates, cov_proj, etc.)
+    dhrp_state = pretrained_dhrp.state_dict()
+    model_state = model.state_dict()
+    transferred = 0
+    for key in dhrp_state:
+        if key in model_state and dhrp_state[key].shape == model_state[key].shape:
+            model_state[key] = dhrp_state[key].to(device)
+            transferred += 1
+    model.load_state_dict(model_state)
+    print(f"  [{mkt}] Transferred {transferred} params from pretrained DHRP")
+
+    # Identify text vs price params
+    text_param_names = {"text_proj", "fusion", "fusion_proj"}
+    text_params = []
+    price_params = []
+    for name, param in model.named_parameters():
+        if any(tp in name for tp in text_param_names):
+            text_params.append(param)
+        else:
+            price_params.append(param)
+
+    Xt = torch.from_numpy(X).to(device)
+    St = torch.from_numpy(S).to(device)
+    Rt = torch.from_numpy(R).to(device)
+    Tt = torch.from_numpy(text_embs).to(device) if text_embs is not None else None
+    Mt = torch.from_numpy(macro_feats.astype(np.float32)).to(device) if macro_feats is not None else None
+
+    phase1_epochs = int(epochs * 0.6)
+    phase2_epochs = epochs - phase1_epochs
+    hrp_lam = cfg.get("hrp_lam_start", 0.15)
+
+    # Phase 1: Freeze price params, only train text/fusion
+    print(f"  [{mkt}] Phase 1: training text pathway only ({phase1_epochs} epochs)")
+    for p in price_params:
+        p.requires_grad = False
+    opt1 = optim.AdamW(text_params, lr=lr, weight_decay=1e-4)
+    sched1 = optim.lr_scheduler.CosineAnnealingLR(opt1, T_max=phase1_epochs, eta_min=lr / 10)
+
+    best_loss, best_st = float("inf"), None
+    for ep in range(phase1_epochs):
+        perm = torch.randperm(n_samp)
+        Xs, Ss, Rs = Xt[perm], St[perm], Rt[perm]
+        Hs = H[perm.cpu().numpy()]
+        Ts = Tt[perm] if Tt is not None else None
+        Ms = Mt[perm] if Mt is not None else None
+        ep_loss, nb = 0.0, 0
+
+        for s in range(0, n_samp, batch_size):
+            e = min(s + batch_size, n_samp)
+            opt1.zero_grad()
+            loss = _llm_dhrp_loss(
+                model, Xs[s:e], Ss[s:e], Rs[s:e], Hs[s:e],
+                text_embs=Ts[s:e] if Ts is not None else None,
+                macro_feats=Ms[s:e] if Ms is not None else None,
+                is_em=is_em, lam_hrp=hrp_lam,
+            )
+            if not torch.isnan(loss) and loss.requires_grad:
+                loss.backward()
+                torch.nn.utils.clip_grad_norm_(text_params, grad_clip)
+                opt1.step()
+                ep_loss += loss.item()
+                nb += 1
+        sched1.step()
+
+        if nb > 0:
+            avg = ep_loss / nb
+            if avg < best_loss:
+                best_loss = avg
+                best_st = {k: v.cpu().clone() for k, v in model.state_dict().items()}
+            if (ep + 1) % 10 == 0 or ep == 0:
+                print(f"  [{mkt}] Phase 1 Epoch {ep + 1}/{phase1_epochs}, loss={avg:.6f}")
+
+    # Phase 2: Unfreeze all, fine-tune with lower LR
+    print(f"  [{mkt}] Phase 2: fine-tuning all params ({phase2_epochs} epochs)")
+    for p in price_params:
+        p.requires_grad = True
+    opt2 = optim.AdamW([
+        {"params": price_params, "lr": lr * 0.1},
+        {"params": text_params, "lr": lr * 0.5},
+    ], weight_decay=1e-4)
+    sched2 = optim.lr_scheduler.CosineAnnealingLR(opt2, T_max=phase2_epochs, eta_min=lr / 50)
+
+    for ep in range(phase2_epochs):
+        perm = torch.randperm(n_samp)
+        Xs, Ss, Rs = Xt[perm], St[perm], Rt[perm]
+        Hs = H[perm.cpu().numpy()]
+        Ts = Tt[perm] if Tt is not None else None
+        Ms = Mt[perm] if Mt is not None else None
+        ep_loss, nb = 0.0, 0
+
+        for s in range(0, n_samp, batch_size):
+            e = min(s + batch_size, n_samp)
+            opt2.zero_grad()
+            loss = _llm_dhrp_loss(
+                model, Xs[s:e], Ss[s:e], Rs[s:e], Hs[s:e],
+                text_embs=Ts[s:e] if Ts is not None else None,
+                macro_feats=Ms[s:e] if Ms is not None else None,
+                is_em=is_em, lam_hrp=hrp_lam * 0.5,
+                lam_turnover=0.03,
+            )
+            if not torch.isnan(loss) and loss.requires_grad:
+                loss.backward()
+                torch.nn.utils.clip_grad_norm_(model.parameters(), grad_clip)
+                opt2.step()
+                ep_loss += loss.item()
+                nb += 1
+        sched2.step()
+
+        if nb > 0:
+            avg = ep_loss / nb
+            if avg < best_loss:
+                best_loss = avg
+                best_st = {k: v.cpu().clone() for k, v in model.state_dict().items()}
+            if (ep + 1) % 10 == 0 or ep == 0:
+                print(f"  [{mkt}] Phase 2 Epoch {ep + 1}/{phase2_epochs}, loss={avg:.6f}")
+
+    if best_st:
+        model.load_state_dict({k: v.to(device) for k, v in best_st.items()})
+    return model
+
+
 def train_llm_dhrp_multiseed(prices, seeds=None, **kwargs):
     """Train LLM-DHRP models across multiple seeds for robustness analysis."""
     if seeds is None:
@@ -277,7 +489,7 @@ def train_llm_dhrp_multiseed(prices, seeds=None, **kwargs):
 
 
 def _llm_dhrp_loss(model, xb, Sb, rb, hrp_w, text_embs=None, macro_feats=None,
-                   is_em=False, lam_hrp=0.3):
+                   is_em=False, lam_hrp=0.3, lam_turnover=0.0):
     """Multi-objective loss for LLM-DHRP."""
     port_r, wts = [], []
     for t in range(rb.shape[0]):
@@ -304,7 +516,12 @@ def _llm_dhrp_loss(model, xb, Sb, rb, hrp_w, text_embs=None, macro_feats=None,
     hhi = (wts ** 2).sum(1).mean()
     concentration_pen = hhi * (0.3 if is_em else 0.1)
 
-    loss = -(crra + sharpe + entropy) + hrp_reg + risk + concentration_pen
+    # Turnover penalty on consecutive weight changes within batch
+    turnover_pen = 0.0
+    if lam_turnover > 0 and wts.shape[0] > 1:
+        turnover_pen = torch.mean(torch.abs(wts[1:] - wts[:-1])) * lam_turnover
+
+    loss = -(crra + sharpe + entropy) + hrp_reg + risk + concentration_pen + turnover_pen
     if torch.isnan(loss):
         return torch.tensor(0.0, device=xb.device, requires_grad=True)
     return loss

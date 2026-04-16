@@ -121,7 +121,7 @@ def build_dataset(prices, window=252, step=5, is_em=False, volume=None, fdim=DEF
             vol_window = volume.iloc[max(0, t - window) : t]
 
         feat = make_features(w_rets, fdim, is_em, volume=vol_window)
-        fwd_r = rets.iloc[t : t + fwd].mean().values
+        fwd_r = (1 + rets.iloc[t : t + fwd]).prod(axis=0).values - 1
         if np.isnan(feat).any() or np.isnan(fwd_r).any():
             continue
         X.append(feat)

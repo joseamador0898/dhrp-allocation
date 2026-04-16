@@ -50,6 +50,7 @@ def rolling_backtest(
     return_weights=False,
     oos_start=None,
     universe=None,
+    weight_ema=0.0,
 ):
     """Run rolling-window backtest over all methods.
 
@@ -74,6 +75,9 @@ def rolling_backtest(
         return_weights: if True, also return weight history for turnover analysis
         oos_start: out-of-sample start date (str or Timestamp). If provided, only
                    backtest from this date onward (for neural methods trained on prior data).
+        weight_ema: EMA smoothing factor for neural method weights (0=no smoothing,
+                    0.3=blend 30% new + 70% old). Reduces turnover. Only applies to
+                    DHRP, LLM_DHRP, MLP, Transformer, PPO.
     Returns:
         DataFrame with columns [method, date, return]
         If return_weights=True, returns (results_df, weights_history)
@@ -175,6 +179,12 @@ def rolling_backtest(
                 )
                 if w is None:
                     continue
+
+                # EMA weight smoothing for neural methods to reduce turnover
+                neural_methods = {"DHRP", "LLM_DHRP", "MLP", "Transformer", "PPO"}
+                if weight_ema > 0 and m in neural_methods and m in prev_weights:
+                    w = (1 - weight_ema) * w + weight_ema * prev_weights[m]
+                    w = w / w.sum()  # re-normalize
 
                 # Record weights for turnover analysis
                 if return_weights:
