@@ -25,7 +25,7 @@ MIN_COVERAGE = 0.95
 PURGE_DAYS = 5  # gap between train and test to prevent look-ahead
 METHODS = [
     "EW", "MINVAR", "MV", "HRP", "RP", "MAXDIV",
-    "DHRP", "LLM_DHRP", "MLP", "Transformer", "PPO",
+    "DHRP", "LLM_DHRP", "MLP", "Transformer", "PPO", "DFL",
 ]
 
 
@@ -37,6 +37,7 @@ def rolling_backtest(
     mlp_model=None,
     transformer_model=None,
     ppo_model=None,
+    dfl_model=None,
     text_features=None,
     macro_features=None,
     methods=None,
@@ -96,6 +97,8 @@ def rolling_backtest(
             methods.append("Transformer")
         if ppo_model is not None:
             methods.append("PPO")
+        if dfl_model is not None:
+            methods.append("DFL")
 
     # Per-universe overrides: lookback, weekly rebalance, covariance shrinkage.
     # When `universe` is None the function's own defaults / is_em branch are
@@ -171,6 +174,7 @@ def rolling_backtest(
                     mlp_model=mlp_model,
                     transformer_model=transformer_model,
                     ppo_model=ppo_model,
+                    dfl_model=dfl_model,
                     text_features=text_features,
                     macro_features=macro_features,
                     rebalance_idx=rebalance_idx,
@@ -266,6 +270,7 @@ def _compute_weights(
     method, mu, cov, train_rets, is_em,
     dhrp_model=None, llm_dhrp_model=None,
     mlp_model=None, transformer_model=None, ppo_model=None,
+    dfl_model=None,
     text_features=None, macro_features=None,
     rebalance_idx=0, rebalance_date=None,
     volume=None,
@@ -298,6 +303,8 @@ def _compute_weights(
         return dhrp_weights(transformer_model, train_rets, is_em, volume=volume)
     elif method == "PPO" and ppo_model is not None:
         return dhrp_weights(ppo_model, train_rets, is_em, volume=volume)
+    elif method == "DFL" and dfl_model is not None:
+        return dhrp_weights(dfl_model, train_rets, is_em, volume=volume)
     return None
 
 

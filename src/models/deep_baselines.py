@@ -324,3 +324,147 @@ def train_transformer_policy(prices, device="cpu", is_em=False, volume=None, fdi
     if best_st:
         model.load_state_dict({k: v.to(device) for k, v in best_st.items()})
     return model
+
+
+class DFLPortfolioPolicy(nn.Module):
+    """Decision-Focused Learning baseline (Wilder et al. 2019, Elmachtoub & Grigas 2022).
+
+    Predicts expected returns and residual covariance, then solves mean-variance
+    optimization differentiably via a soft-regularized closed-form solution.
+    Trained end-to-end with a decision loss (Sharpe or CRRA), not MSE on returns.
+
+    This is the hot trend at ICAIF 2025 — papers like "Return Prediction for
+    Mean-Variance Portfolio Selection: How Decision-Focused Learning Shapes
+    Forecasting Models" — a natural baseline to compete against.
+    """
+
+    def __init__(self, feature_dim, n_assets, hidden=128, dropout=0.1,
+                 risk_aversion=2.0):
+        super().__init__()
+        self.n_assets = n_assets
+        self.feature_dim = feature_dim
+        self.risk_aversion = risk_aversion
+
+        self.feat_norm = nn.LayerNorm(feature_dim)
+        cov_dim = n_assets * n_assets
+        self.cov_proj = nn.Sequential(
+            nn.Linear(cov_dim, hidden), nn.Tanh(),
+            nn.Linear(hidden, feature_dim),
+        )
+
+        # Return prediction head
+        self.return_head = nn.Sequential(
+            nn.Linear(feature_dim * 2, hidden), nn.ReLU(), nn.Dropout(dropout),
+            nn.Linear(hidden, hidden), nn.ReLU(),
+            nn.Linear(hidden, n_assets),
+        )
+
+        # Covariance adjustment head (diagonal residual to input covariance)
+        self.cov_adjust_head = nn.Sequential(
+            nn.Linear(feature_dim * 2, hidden), nn.ReLU(), nn.Dropout(dropout),
+            nn.Linear(hidden, n_assets),
+            nn.Softplus(),  # positive diagonal adjustment
+        )
+
+        # Learnable regularization
+        self.log_reg = nn.Parameter(torch.tensor(-2.0))  # exp(-2) ~ 0.135
+
+    def forward(self, x_t, Sigma_t):
+        """Forward pass: predict mu, adjust cov, solve MV with soft regularization.
+
+        w = softmax(-gamma * argmin_w [w^T Sigma w - mu^T w + lambda ||w - 1/n||^2])
+
+        Closed-form with diagonal augmentation:
+            w_unnorm = (Sigma + lam*I)^(-1) mu
+            w = softmax(gamma * w_unnorm)  # ensure non-negative and sum-to-1
+        """
+        Sigma_norm = Sigma_t / (Sigma_t.abs().max() + 1e-6)
+        cov_feat = self.cov_proj(Sigma_norm.reshape(-1))
+        feat = self.feat_norm(x_t)
+        combined = torch.cat([feat, cov_feat], dim=-1)
+
+        mu_pred = self.return_head(combined)          # (n_assets,)
+        cov_diag_adj = self.cov_adjust_head(combined) # (n_assets,) positive
+        lam = self.log_reg.exp() + 1e-4
+
+        # Augmented covariance: add learned diagonal + regularization
+        n = self.n_assets
+        eye = torch.eye(n, device=x_t.device)
+        Sigma_aug = Sigma_t + torch.diag(cov_diag_adj) + lam * eye
+
+        # Differentiable MV solution via Cholesky solve
+        try:
+            L = torch.linalg.cholesky(Sigma_aug)
+            w_raw = torch.cholesky_solve(mu_pred.unsqueeze(-1), L).squeeze(-1)
+        except Exception:
+            # Fallback: inverse with small ridge
+            Sigma_ridge = Sigma_aug + 1e-3 * eye
+            w_raw = torch.linalg.solve(Sigma_ridge, mu_pred)
+
+        # Project to simplex via softmax (long-only, sum-to-1)
+        w = F.softmax(self.risk_aversion * w_raw, dim=-1)
+        return w
+
+
+def train_dfl_baseline(prices, device="cpu", is_em=False, volume=None,
+                       epochs=40, lr=3e-4, fdim=None, seed=42, train_end=None):
+    """Train the Decision-Focused Learning baseline."""
+    import numpy as np
+    from ..data.feature_engineering import build_dataset, DEFAULT_FDIM
+    from .loss_functions import dhrp_loss
+
+    if fdim is None:
+        fdim = DEFAULT_FDIM
+
+    np.random.seed(seed)
+    torch.manual_seed(seed)
+    if torch.cuda.is_available():
+        torch.cuda.manual_seed_all(seed)
+
+    X, S, R, H = build_dataset(prices, is_em=is_em, volume=volume, fdim=fdim,
+                                train_end=train_end)
+    if X.ndim == 1 or X.shape[0] < 50:
+        raise ValueError(f"Insufficient data: {X.shape[0] if X.ndim > 1 else 0}")
+
+    n_samp, fdim_actual, n_assets = X.shape[0], X.shape[1], prices.shape[1]
+    print(f"  [DFL] {n_samp} samples, {n_assets} assets, fdim={fdim_actual}")
+
+    model = DFLPortfolioPolicy(fdim_actual, n_assets).to(device)
+    opt = torch.optim.AdamW(model.parameters(), lr=lr, weight_decay=1e-4)
+    sched = torch.optim.lr_scheduler.CosineAnnealingLR(opt, T_max=epochs, eta_min=lr / 20)
+
+    Xt = torch.from_numpy(X).to(device)
+    St = torch.from_numpy(S).to(device)
+    Rt = torch.from_numpy(R).to(device)
+
+    best_loss, best_st = float("inf"), None
+    for ep in range(epochs):
+        perm = torch.randperm(n_samp)
+        ep_loss, nb = 0.0, 0
+
+        for s in range(0, n_samp, 32):
+            e = min(s + 32, n_samp)
+            opt.zero_grad()
+            loss = dhrp_loss(
+                model, Xt[perm[s:e]], St[perm[s:e]], Rt[perm[s:e]],
+                H[perm[s:e].cpu().numpy()], is_em=is_em, lam_hrp=0.1,
+            )
+            if not torch.isnan(loss) and loss.requires_grad:
+                loss.backward()
+                torch.nn.utils.clip_grad_norm_(model.parameters(), 1.0)
+                opt.step()
+                ep_loss += loss.item()
+                nb += 1
+        sched.step()
+
+        if nb > 0:
+            avg = ep_loss / nb
+            if avg < best_loss:
+                best_loss = avg
+                best_st = {k: v.cpu().clone() for k, v in model.state_dict().items()}
+            if (ep + 1) % 10 == 0 or ep == 0:
+                print(f"  [DFL] Epoch {ep + 1}/{epochs}, loss={avg:.6f}")
+
+    if best_st:
+        model.load_state_dict({k: v.to(device) for k, v in best_st.items()})
+    return model

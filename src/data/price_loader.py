@@ -37,6 +37,34 @@ UNIVERSES = {
         "Silver": "SLV", "Agriculture": "DBA", "Commodities": "DBC",
         "Copper": "CPER", "Wheat": "WEAT", "Corn": "CORN", "Soybeans": "SOYB",
     },
+    # US Sector ETFs — SPDR Select Sector SPDRs (10 sectors, deep history)
+    "Sectors": {
+        "Tech": "XLK", "Financials": "XLF", "HealthCare": "XLV",
+        "Energy": "XLE", "ConsumerDisc": "XLY", "ConsumerStap": "XLP",
+        "Industrials": "XLI", "Utilities": "XLU", "Materials": "XLB",
+        "RealEstate": "XLRE",
+    },
+    # Global Multi-Asset — balanced 10-asset global portfolio
+    "Global": {
+        "USLarge": "SPY", "USGrowth": "QQQ", "EAFE": "EFA", "EM": "EEM",
+        "USBonds": "AGG", "TIPS": "TIP", "HighYield": "HYG",
+        "Gold": "GLD", "REIT": "VNQ", "Commodities": "DBC",
+    },
+    # Factor/Style ETFs — for factor-exposure analysis
+    "Factors": {
+        "Momentum": "MTUM", "Value": "VLUE", "Quality": "QUAL",
+        "MinVol": "USMV", "Size": "SIZE", "Dividend": "VIG",
+        "Growth": "IVW", "Blend": "IVV", "SmallValue": "SLYV", "SmallGrowth": "SLYG",
+    },
+    # Crypto — limited history (post-2020). Used only for recent-period analysis.
+    "Crypto": {
+        "BitcoinETF": "GBTC", "EthereumETF": "ETHE",
+        # Blockchain-related equities as proxies for broader crypto exposure
+        "Coinbase": "COIN", "MicroStrategy": "MSTR",
+        "MarathonDigital": "MARA", "RiotPlatforms": "RIOT",
+        "CleanSpark": "CLSK", "Hut8Mining": "HUT",
+        "BitcoinFutures": "BITO", "EthFutures": "EETH",
+    },
 }
 
 # Shared session with browser-like headers

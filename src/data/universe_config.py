@@ -61,6 +61,67 @@ UNIVERSE_DATA_CONFIG = {
         "cov_shrinkage": 0.01,
         "tree_depth": 2,
     },
+    # US sectors — similar to DM but with stronger within-market correlation.
+    # Tree depth 3 captures the cyclical/defensive/growth structure.
+    "Sectors": {
+        "use_text": True,
+        "use_macro": True,
+        "macro_source": "fred_us",
+        "lookback_window": 252,
+        "rebalance_freq": 21,
+        "text_lr_scale": 0.5,
+        "modality_dropout": 0.1,
+        "gate_bias_init": -1.0,
+        "hrp_lam_start": 0.3,
+        "hrp_lam_end": 0.05,
+        "cov_shrinkage": 1e-6,
+        "tree_depth": 3,
+    },
+    # Global multi-asset — diverse correlation structure, needs deeper tree
+    "Global": {
+        "use_text": True,
+        "use_macro": True,
+        "macro_source": "fred_us",
+        "lookback_window": 252,
+        "rebalance_freq": 21,
+        "text_lr_scale": 0.5,
+        "modality_dropout": 0.1,
+        "gate_bias_init": -1.0,
+        "hrp_lam_start": 0.3,
+        "hrp_lam_end": 0.05,
+        "cov_shrinkage": 1e-5,
+        "tree_depth": 3,
+    },
+    # Factor ETFs — similar regime structure to DM
+    "Factors": {
+        "use_text": False,  # Factor ETFs don't have clear news attribution
+        "use_macro": True,
+        "macro_source": "fred_us",
+        "lookback_window": 252,
+        "rebalance_freq": 21,
+        "text_lr_scale": 0.5,
+        "modality_dropout": 0.1,
+        "gate_bias_init": -1.0,
+        "hrp_lam_start": 0.3,
+        "hrp_lam_end": 0.05,
+        "cov_shrinkage": 1e-5,
+        "tree_depth": 3,
+    },
+    # Crypto — high volatility, short history, use short lookback
+    "Crypto": {
+        "use_text": True,
+        "use_macro": True,
+        "macro_source": "fred_us",
+        "lookback_window": 63,
+        "rebalance_freq": 5,
+        "text_lr_scale": 1.0,  # crypto-sentiment correlation is strong
+        "modality_dropout": 0.05,
+        "gate_bias_init": -0.5,
+        "hrp_lam_start": 0.3,
+        "hrp_lam_end": 0.05,
+        "cov_shrinkage": 0.02,  # Higher shrinkage for extreme volatility
+        "tree_depth": 2,
+    },
 }
 
 
