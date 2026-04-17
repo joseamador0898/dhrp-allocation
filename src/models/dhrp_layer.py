@@ -93,3 +93,14 @@ class DHRPLayer(nn.Module):
         else:
             final = alpha * asset_b + (1 - alpha) * inv_vol
         return torch.clamp(final, min=1e-6) / torch.clamp(final, min=1e-6).sum()
+
+    def get_gating_probs(self, x_t, Sigma_t, text_emb=None, macro_feat=None):
+        """Return per-node gating probabilities for interpretability analysis.
+
+        text_emb and macro_feat are accepted for API compatibility with
+        LLMDHRPLayer but ignored here (DHRPLayer uses price features only).
+        """
+        Sigma_norm = Sigma_t / (Sigma_t.abs().max() + 1e-6)
+        node_feat = self.feat_norm(x_t + self.cov_proj(Sigma_norm.reshape(-1)))
+        temp = torch.clamp(self.log_temp.exp(), 0.1, 5.0)
+        return [F.softmax(g(node_feat) / temp, dim=-1).detach() for g in self.gates]
