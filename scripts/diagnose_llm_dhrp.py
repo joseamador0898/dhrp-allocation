@@ -318,6 +318,27 @@ def run_full_diagnostics(
     if np.mean(weight_diffs) < 0.01:
         issues.append("Weight impact negligible (mean < 0.01)")
 
+    # Embedding quality issues (BERT anisotropy) — propagate to summary
+    if text_embs is not None and len(text_embs) >= 2:
+        norms = np.linalg.norm(text_embs, axis=-1)
+        good = norms > 1e-6
+        if good.sum() >= 2:
+            X = text_embs[good]
+            sims = []
+            n = min(50, len(X))
+            for i in range(n):
+                for j in range(i + 1, n):
+                    s = np.dot(X[i], X[j]) / (np.linalg.norm(X[i]) * np.linalg.norm(X[j]) + 1e-8)
+                    sims.append(s)
+            if sims:
+                sims = np.array(sims)
+                if np.std(sims) < 0.05 or np.mean(sims) > 0.95:
+                    issues.append(
+                        f"Embeddings anisotropic (cos sim mean={np.mean(sims):.3f}, "
+                        f"std={np.std(sims):.3f}) — apply Soft-ZCA whitening or use "
+                        f"FinLang/finance-embeddings-investopedia"
+                    )
+
     if issues:
         print("  ISSUES FOUND:")
         for issue in issues:
@@ -327,6 +348,8 @@ def run_full_diagnostics(
         print("    2. Increase text_lr_scale from 0.3 to 0.5")
         print("    3. Reduce modality_dropout from 0.2 to 0.1")
         print("    4. Try warm-start training: train_llm_dhrp_warmstart()")
+        print("    5. Apply Soft-ZCA whitening (apply_soft_zca_whitening in llm_features.py)")
+        print("    6. Or switch to FinLang/finance-embeddings-investopedia sentence-transformer")
     else:
         print("  No critical issues found — text pathway is active")
         print("  If performance is still poor, the issue may be text quality, not architecture")

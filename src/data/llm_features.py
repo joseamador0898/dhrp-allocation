@@ -75,16 +75,57 @@ def get_gemini_embeddings(headlines, model="text-embedding-004", batch_size=100)
     return np.zeros((len(headlines), 768), dtype=np.float32)
 
 
-def get_finbert_embeddings(headlines, batch_size=None, device="cuda"):
+def apply_soft_zca_whitening(embeddings, alpha=0.05):
+    """Apply Soft-ZCA whitening to fix BERT anisotropy (cosine sim collapse).
+
+    Reference: "Isotropy Matters: Soft-ZCA Whitening of Embeddings"
+    (arXiv 2411.17538). BERT mean-pooled embeddings cluster into a narrow
+    cone (cosine sim ~1.0). Whitening restores isotropy and recovers
+    discriminative signal.
+
+    Args:
+        embeddings: (N, D) array of raw BERT embeddings
+        alpha: regularization strength (0=full ZCA, 1=identity); 0.05 is
+               the documented sweet spot from the paper
+    Returns:
+        (N, D) whitened embeddings with restored variance
+    """
+    if embeddings.shape[0] < 2:
+        return embeddings  # need ≥2 samples to compute covariance
+
+    # Center
+    mu = embeddings.mean(axis=0, keepdims=True)
+    X = embeddings - mu
+
+    # Covariance + regularized eigendecomposition
+    cov = np.cov(X.T)
+    eigvals, eigvecs = np.linalg.eigh(cov)
+    eigvals = np.maximum(eigvals, 1e-8)
+
+    # Soft ZCA: blend whitening with identity by alpha
+    # W = U * diag(eigvals^{-(1-alpha)/2}) * U^T
+    inv_sqrt = eigvals ** (-(1 - alpha) / 2)
+    W = eigvecs @ np.diag(inv_sqrt) @ eigvecs.T
+
+    return (X @ W).astype(np.float32)
+
+
+def get_finbert_embeddings(headlines, batch_size=None, device="cuda",
+                            apply_whitening=True, pooling="mean"):
     """Extract 768-dim FinBERT embeddings from financial headlines.
 
-    Uses mean pooling over token representations for dense embeddings.
+    By default applies Soft-ZCA whitening to fix the documented BERT
+    anisotropy problem (without whitening, all embeddings have cosine
+    similarity ~1.0 — see arXiv 2411.17538).
+
     Batch size auto-scales: 256 on A100 (80GB), 64 on T4 (16GB).
 
     Args:
         headlines: list of headline strings
         batch_size: inference batch size (None = auto by VRAM)
         device: "cuda" or "cpu"
+        apply_whitening: if True, apply Soft-ZCA whitening (recommended)
+        pooling: "mean" (default), "cls", or "max"
     Returns:
         np.ndarray of shape (len(headlines), 768)
     """
@@ -113,16 +154,71 @@ def get_finbert_embeddings(headlines, batch_size=None, device="cuda"):
         ).to(device)
         with torch.no_grad():
             outputs = model(**inputs)
-        # Mean pooling over tokens (excluding padding)
-        mask = inputs["attention_mask"].unsqueeze(-1).float()
-        emb = (outputs.last_hidden_state * mask).sum(dim=1) / mask.sum(dim=1)
+
+        if pooling == "cls":
+            emb = outputs.last_hidden_state[:, 0, :]
+        elif pooling == "max":
+            mask = inputs["attention_mask"].unsqueeze(-1).float()
+            hidden = outputs.last_hidden_state * mask + (1 - mask) * (-1e9)
+            emb = hidden.max(dim=1).values
+        else:  # mean
+            mask = inputs["attention_mask"].unsqueeze(-1).float()
+            emb = (outputs.last_hidden_state * mask).sum(dim=1) / mask.sum(dim=1)
+
         embeddings.append(emb.cpu().numpy())
 
     del model
     if device == "cuda":
         torch.cuda.empty_cache()
 
-    return np.vstack(embeddings) if embeddings else np.empty((0, 768))
+    raw = np.vstack(embeddings) if embeddings else np.empty((0, 768))
+
+    if apply_whitening and raw.shape[0] >= 2:
+        return apply_soft_zca_whitening(raw, alpha=0.05)
+    return raw
+
+
+def get_finance_sentence_embeddings(headlines, device="cuda",
+                                     model_name="FinLang/finance-embeddings-investopedia"):
+    """Alternative: use a finance-domain sentence-transformer.
+
+    FinLang/finance-embeddings-investopedia is fine-tuned from BAAI/bge-base-en-v1.5
+    on Investopedia finance text. Built with sentence-transformers, so it
+    natively avoids the BERT anisotropy problem.
+
+    Use this as a drop-in replacement for get_finbert_embeddings() when
+    text quality matters more than backwards compatibility with the
+    ProsusAI/finbert sentiment classifier.
+
+    Args:
+        headlines: list of headline strings
+        device: "cuda" or "cpu"
+        model_name: HuggingFace model ID (default: FinLang investopedia)
+    Returns:
+        np.ndarray of shape (len(headlines), 768)
+    """
+    try:
+        from sentence_transformers import SentenceTransformer
+    except ImportError:
+        raise ImportError(
+            "sentence-transformers required: pip install sentence-transformers"
+        )
+
+    model = SentenceTransformer(model_name, device=device)
+    embeddings = model.encode(
+        headlines,
+        batch_size=64,
+        show_progress_bar=False,
+        convert_to_numpy=True,
+        normalize_embeddings=True,  # L2-normalize for cosine similarity
+    )
+
+    del model
+    import torch
+    if device == "cuda" and torch.cuda.is_available():
+        torch.cuda.empty_cache()
+
+    return embeddings.astype(np.float32)
 
 
 def _select_qwen_model():

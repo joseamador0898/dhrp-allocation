@@ -26,7 +26,8 @@ UNIVERSE_DATA_CONFIG = {
         "hrp_lam_start": 0.3,
         "hrp_lam_end": 0.05,
         "cov_shrinkage": 1e-6,
-        "tree_depth": 3,
+        # depth=2 best in Cell 16 ablation (Sharpe 0.268 vs depth=3 0.163)
+        "tree_depth": 2,
     },
     "EM": {
         "use_text": True,
@@ -40,7 +41,8 @@ UNIVERSE_DATA_CONFIG = {
         "hrp_lam_start": 0.3,
         "hrp_lam_end": 0.05,
         "cov_shrinkage": 0.001,  # matches backtest.py is_em branch
-        "tree_depth": 3,
+        # depth=2 default — same rationale as DM, ablation should re-validate
+        "tree_depth": 2,
     },
     "Commodities": {
         "use_text": True,
@@ -62,7 +64,7 @@ UNIVERSE_DATA_CONFIG = {
         "tree_depth": 2,
     },
     # US sectors — similar to DM but with stronger within-market correlation.
-    # Tree depth 3 captures the cyclical/defensive/growth structure.
+    # Tree depth 2 (matches DM/EM ablation finding); deeper trees overfit on 10 assets.
     "Sectors": {
         "use_text": True,
         "use_macro": True,
@@ -75,7 +77,7 @@ UNIVERSE_DATA_CONFIG = {
         "hrp_lam_start": 0.3,
         "hrp_lam_end": 0.05,
         "cov_shrinkage": 1e-6,
-        "tree_depth": 3,
+        "tree_depth": 2,
     },
     # Global multi-asset — diverse correlation structure, needs deeper tree
     "Global": {

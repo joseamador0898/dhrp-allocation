@@ -43,8 +43,9 @@ def train_dhrp(prices, device="cpu", is_em=False, volume=None, fdim=DEFAULT_FDIM
     St = torch.from_numpy(S).to(device)
     Rt = torch.from_numpy(R).to(device)
 
-    # Turnover penalty ramps up over training to encourage stable weights
-    lam_turnover = 0.05 if not is_em else 0.02
+    # Turnover penalty: gentler than first attempt — 0.05 dropped DM Sharpe
+    # from 0.221 to 0.134 in the post-fix re-run, so reduce by 4x.
+    lam_turnover = 0.012 if not is_em else 0.005
 
     best_loss, best_st = float("inf"), None
     for ep in range(epochs):
@@ -53,8 +54,9 @@ def train_dhrp(prices, device="cpu", is_em=False, volume=None, fdim=DEFAULT_FDIM
         Hs = H[perm.cpu().numpy()]
         ep_loss, nb = 0.0, 0
         lam = hrp_s - (hrp_s - hrp_e) * (ep / epochs)
-        # Ramp turnover penalty: 0 for first 20% of training, then linear to full
-        turnover_scale = max(0.0, (ep / epochs - 0.2) / 0.8)
+        # Ramp turnover penalty: 0 for first 40% of training, then linear to full
+        # Later ramp lets the model find good allocations before stability bias
+        turnover_scale = max(0.0, (ep / epochs - 0.4) / 0.6)
 
         prev_wts = None
         for s in range(0, n_samp, 32):
@@ -243,7 +245,7 @@ def train_llm_dhrp(
         Ms = Mt[perm] if Mt is not None else None
         ep_loss, nb = 0.0, 0
         lam = hrp_lam_start - (hrp_lam_start - hrp_lam_end) * (ep / epochs) if use_hrp_reg else 0.0
-        turnover_scale = max(0.0, (ep / epochs - 0.2) / 0.8)
+        turnover_scale = max(0.0, (ep / epochs - 0.4) / 0.6)
 
         for s in range(0, n_samp, batch_size):
             e = min(s + batch_size, n_samp)
