@@ -56,6 +56,13 @@ UNIVERSES = {
         "MinVol": "USMV", "Size": "SIZE", "Dividend": "VIG",
         "Growth": "IVW", "Blend": "IVV", "SmallValue": "SLYV", "SmallGrowth": "SLYG",
     },
+    # Bonds — diversified fixed income across duration, credit, geography
+    "Bonds": {
+        "LongTreasury": "TLT", "IntermTreasury": "IEF", "ShortTreasury": "SHY",
+        "Corporate": "LQD", "HighYield": "HYG", "EMBond": "EMB",
+        "Muni": "MUB", "IntlBond": "BNDX",
+        "FloatingRate": "FLOT", "TIPS": "TIP",
+    },
     # Crypto — limited history (post-2020). Used only for recent-period analysis.
     "Crypto": {
         "BitcoinETF": "GBTC", "EthereumETF": "ETHE",

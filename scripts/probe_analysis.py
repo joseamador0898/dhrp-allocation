@@ -232,6 +232,143 @@ def compare_with_hrp(model, returns, asset_names):
     return {"ari": ari, "nmi": nmi}
 
 
+def weight_sharpe_correlation_probe(model, X, S, returns, dates, prices,
+                                     text_embs=None, device="cpu",
+                                     forward_days=21, label=""):
+    """Probe whether the model's allocation aligns with realized risk-adjusted returns.
+
+    Replaces the failed regime-classification probe (test acc 0.041 vs majority
+    0.709). Per-asset version: for each asset i and each rebalance date t,
+    compute Spearman correlation between the model's weight on asset i and
+    asset i's forward Sharpe ratio over the next k=forward_days.
+
+    A high correlation means the model concentrates weight on assets that go on
+    to deliver high risk-adjusted returns — even if it doesn't classify regimes.
+    This is the metric reviewers actually care about for portfolio interpretability.
+
+    Args:
+        model: trained DHRPLayer or LLMDHRPLayer
+        X, S: feature/covariance arrays from build_dataset
+        returns: (n_dates, n_assets) DataFrame of daily returns
+        dates: list of timestamps for each sample
+        prices: original price DataFrame (used for asset names)
+        text_embs: optional per-timestep text embeddings
+        forward_days: forward horizon (default 21 = 1 trading month)
+    Returns:
+        dict with per-asset and aggregate correlation metrics
+    """
+    from scipy.stats import spearmanr
+
+    print(f"\n{'='*60}")
+    print(f"  WEIGHT-SHARPE CORRELATION PROBE: {label}")
+    print(f"{'='*60}")
+
+    n_samp = X.shape[0]
+    n_assets = prices.shape[1]
+    asset_names = list(prices.columns)
+    rets_arr = returns.values if hasattr(returns, "values") else returns
+    rets_idx = returns.index if hasattr(returns, "index") else None
+
+    weights_history = []  # (n_samp, n_assets)
+    forward_sharpes = []  # (n_samp, n_assets)
+
+    model.eval()
+    with torch.no_grad():
+        for t in range(n_samp):
+            if t >= len(dates):
+                break
+            x_t = torch.from_numpy(X[t]).to(device)
+            s_t = torch.from_numpy(S[t]).to(device)
+
+            if text_embs is not None:
+                te = torch.from_numpy(text_embs[t]).to(device)
+                w = model(x_t, s_t, text_emb=te).cpu().numpy()
+            else:
+                w = model(x_t, s_t).cpu().numpy()
+
+            # Find date index in returns
+            if rets_idx is not None:
+                date_t = pd.Timestamp(dates[t])
+                pos_arr = rets_idx.get_indexer([date_t], method="nearest")
+                pos = int(pos_arr[0])
+            else:
+                pos = t
+
+            # Forward Sharpe per asset over next forward_days
+            window_end = min(pos + forward_days, rets_arr.shape[0])
+            if window_end - pos < 5:
+                continue
+            window = rets_arr[pos:window_end]
+            mu = np.nanmean(window, axis=0) * 252
+            sigma = np.nanstd(window, axis=0) * np.sqrt(252) + 1e-8
+            fwd_sharpe = mu / sigma
+
+            weights_history.append(w)
+            forward_sharpes.append(fwd_sharpe)
+
+    if not weights_history:
+        print("  No samples to evaluate — probe failed.")
+        return None
+
+    W = np.array(weights_history)        # (T, n_assets)
+    SR = np.array(forward_sharpes)       # (T, n_assets)
+
+    # Per-asset Spearman correlation between weight and forward Sharpe
+    per_asset_corr = []
+    for i in range(n_assets):
+        w_col = W[:, i]
+        sr_col = SR[:, i]
+        valid = ~(np.isnan(w_col) | np.isnan(sr_col))
+        if valid.sum() < 10 or np.std(w_col[valid]) < 1e-8 or np.std(sr_col[valid]) < 1e-8:
+            per_asset_corr.append(np.nan)
+            continue
+        rho, _ = spearmanr(w_col[valid], sr_col[valid])
+        per_asset_corr.append(rho)
+
+    per_asset_corr = np.array(per_asset_corr)
+    valid_corrs = per_asset_corr[~np.isnan(per_asset_corr)]
+    mean_corr = float(np.nanmean(valid_corrs)) if len(valid_corrs) > 0 else 0.0
+    abs_mean_corr = float(np.nanmean(np.abs(valid_corrs))) if len(valid_corrs) > 0 else 0.0
+
+    # Cross-sectional: at each date, does weight ranking predict Sharpe ranking?
+    cross_sectional_corrs = []
+    for t in range(W.shape[0]):
+        valid_t = ~(np.isnan(W[t]) | np.isnan(SR[t]))
+        if valid_t.sum() < 3:
+            continue
+        if np.std(W[t][valid_t]) < 1e-8 or np.std(SR[t][valid_t]) < 1e-8:
+            continue
+        rho, _ = spearmanr(W[t][valid_t], SR[t][valid_t])
+        if not np.isnan(rho):
+            cross_sectional_corrs.append(rho)
+    cross_sec_mean = float(np.mean(cross_sectional_corrs)) if cross_sectional_corrs else 0.0
+
+    print(f"  Samples: {W.shape[0]}, forward horizon: {forward_days} days")
+    print(f"  Per-asset Spearman correlation (weight ↔ forward Sharpe):")
+    for i, name in enumerate(asset_names):
+        rho = per_asset_corr[i]
+        marker = "" if np.isnan(rho) else ("**" if abs(rho) > 0.3 else ("*" if abs(rho) > 0.15 else ""))
+        print(f"    {name:15s}: {rho:+.3f} {marker}")
+    print(f"  Mean per-asset correlation:        {mean_corr:+.4f}")
+    print(f"  Mean |per-asset correlation|:      {abs_mean_corr:.4f}")
+    print(f"  Cross-sectional correlation (mean): {cross_sec_mean:+.4f}")
+
+    if abs_mean_corr > 0.3:
+        print("  [STRONG] Model concentrates weight on assets with high forward Sharpe.")
+    elif abs_mean_corr > 0.15:
+        print("  [MODERATE] Some weight-Sharpe alignment.")
+    else:
+        print("  [WEAK] Allocations not predictive of forward risk-adjusted returns.")
+
+    return {
+        "per_asset_corr": per_asset_corr,
+        "mean_corr": mean_corr,
+        "abs_mean_corr": abs_mean_corr,
+        "cross_sectional_mean": cross_sec_mean,
+        "n_samples": W.shape[0],
+    }
+
+
 def plot_gate_heatmap(gate_probs, dates, save_path=None, label=""):
     """Heatmap of gate activations over time — visualizes regime detection."""
     n_samples, n_gates, _ = gate_probs.shape
@@ -287,6 +424,17 @@ def run_full_probe(model, X, S, dates, asset_names, returns=None,
     if returns is not None:
         hrp_compare = compare_with_hrp(model, returns, asset_names)
 
+    # Probe 4: Weight-Sharpe correlation (replaces failed regime probe)
+    ws_probe = None
+    if returns is not None:
+        # Need original prices DataFrame; reconstruct from returns
+        ws_probe = weight_sharpe_correlation_probe(
+            model, X, S, returns, dates_list,
+            prices=returns,  # returns DataFrame has the asset names we need
+            text_embs=text_embs, device=device,
+            forward_days=21, label=label,
+        )
+
     # Visualization
     plot_gate_heatmap(
         gate_probs, dates_list,
@@ -298,6 +446,7 @@ def run_full_probe(model, X, S, dates, asset_names, returns=None,
         "regime_probe": probe_result,
         "asset_groups": group_result,
         "hrp_compare": hrp_compare,
+        "weight_sharpe_probe": ws_probe,
         "gate_probs": gate_probs,
     }
 

@@ -178,6 +178,38 @@ def get_finbert_embeddings(headlines, batch_size=None, device="cuda",
     return raw
 
 
+def aggregate_text_per_timestep(fb, method="norm_mean_max_concat"):
+    """Aggregate per-asset text embeddings into a per-timestep feature vector.
+
+    Critical fix for the anisotropy collapse: simple mean across n_assets
+    of high-dim BERT embeddings collapses to ~zero, making every timestep
+    look identical. Instead, L2-normalize each asset embedding first, then
+    use [mean, max] concatenation to preserve per-asset variance signal.
+
+    Args:
+        fb: (n_dates, n_assets, D) per-asset text embeddings
+        method:
+            "mean" — legacy (broken): simple mean across assets, returns (N, D)
+            "norm_mean" — L2-normalize first, then mean. Returns (N, D)
+            "norm_mean_max_concat" — L2-norm, then [mean, max] concat. Returns (N, 2D)
+    Returns:
+        (n_dates, D_out) timestep-level text features
+    """
+    if method == "mean":
+        return fb.mean(axis=1).astype(np.float32)
+
+    norms = np.linalg.norm(fb, axis=-1, keepdims=True)
+    fb_norm = fb / (norms + 1e-8)
+
+    if method == "norm_mean":
+        return fb_norm.mean(axis=1).astype(np.float32)
+
+    # Default: norm_mean_max_concat preserves variance + extreme signals
+    mean_part = fb_norm.mean(axis=1)
+    max_part = fb_norm.max(axis=1)
+    return np.concatenate([mean_part, max_part], axis=-1).astype(np.float32)
+
+
 def get_finance_sentence_embeddings(headlines, device="cuda",
                                      model_name="FinLang/finance-embeddings-investopedia"):
     """Alternative: use a finance-domain sentence-transformer.

@@ -109,6 +109,21 @@ UNIVERSE_DATA_CONFIG = {
         "cov_shrinkage": 1e-5,
         "tree_depth": 3,
     },
+    # Bonds — fixed income, low volatility, longer rebalance OK
+    "Bonds": {
+        "use_text": False,  # Bond news harder to attribute per-asset
+        "use_macro": True,
+        "macro_source": "fred_us",
+        "lookback_window": 252,
+        "rebalance_freq": 21,
+        "text_lr_scale": 0.5,
+        "modality_dropout": 0.1,
+        "gate_bias_init": -1.0,
+        "hrp_lam_start": 0.3,
+        "hrp_lam_end": 0.05,
+        "cov_shrinkage": 1e-5,
+        "tree_depth": 2,
+    },
     # Crypto — high volatility, short history, use short lookback
     "Crypto": {
         "use_text": True,

@@ -344,7 +344,12 @@ def _llm_dhrp_weights(
                 if emb is not None:
                     emb = np.asarray(emb)
                     if emb.ndim == 2:
-                        emb = emb.mean(axis=0)
+                        # Match training-time aggregation: L2-norm + [mean,max] concat
+                        # Avoids the anisotropy collapse from naive mean(axis=0)
+                        from ..data.llm_features import aggregate_text_per_timestep
+                        emb = aggregate_text_per_timestep(
+                            emb[None, ...], method="norm_mean_max_concat"
+                        )[0]
                     text_emb = torch.from_numpy(emb.astype(np.float32)).to(device)
 
         macro_feat = None

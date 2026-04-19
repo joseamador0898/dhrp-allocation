@@ -9,6 +9,7 @@ from ..models.llm_dhrp_layer import LLMDHRPLayer
 from ..models.loss_functions import dhrp_loss
 from ..data.feature_engineering import build_dataset, make_features, DEFAULT_FDIM
 from ..data.universe_config import get_universe_config
+from ..data.llm_features import aggregate_text_per_timestep
 
 
 def _set_seed(seed):
@@ -177,17 +178,23 @@ def train_llm_dhrp(
     mkt = universe if universe else ("EM" if is_em else "DM")
     print(f"  [{mkt}] {n_samp} samples, {n_assets} assets, fdim={fdim_actual} (LLM-DHRP)")
 
-    # Prepare text embeddings — average across assets for a global signal
+    # Prepare text embeddings — L2-norm + [mean,max] concat aggregation
+    # to fix the anisotropy collapse from naive mean(axis=1) which made all
+    # timesteps look identical (cosine sim = 1.0).
     text_embs = None
+    text_dim_actual = text_dim
     if use_text and text_features is not None:
         if "finbert" in text_features and text_features["finbert"] is not None:
             fb = text_features["finbert"]  # (n_dates, n_assets, 768)
             n_text = min(fb.shape[0], n_samp)
-            text_embs = fb[:n_text].mean(axis=1)  # (n_text, 768)
+            text_embs = aggregate_text_per_timestep(
+                fb[:n_text], method="norm_mean_max_concat"
+            )  # (n_text, 1536)
+            text_dim_actual = text_embs.shape[1]
             if n_text < n_samp:
-                pad = np.zeros((n_samp - n_text, text_embs.shape[1]), dtype=np.float32)
+                pad = np.zeros((n_samp - n_text, text_dim_actual), dtype=np.float32)
                 text_embs = np.vstack([text_embs, pad])
-            print(f"  [{mkt}] Text features: {text_embs.shape}")
+            print(f"  [{mkt}] Text features: {text_embs.shape} (norm_mean_max_concat)")
 
     # Prepare macro features
     macro_feats = None
@@ -201,7 +208,7 @@ def train_llm_dhrp(
         print(f"  [{mkt}] Macro features: {macro_feats.shape}")
 
     model = LLMDHRPLayer(
-        n_assets=n_assets, feature_dim=fdim_actual, text_dim=text_dim,
+        n_assets=n_assets, feature_dim=fdim_actual, text_dim=text_dim_actual,
         hidden_dim=hidden_dim, depth=depth, is_em=is_em,
         use_text=use_text and text_embs is not None,
         use_macro=use_macro and macro_feats is not None,
@@ -322,17 +329,21 @@ def train_llm_dhrp_warmstart(
     mkt = universe if universe else ("EM" if is_em else "DM")
     print(f"  [{mkt}] {n_samp} samples (warm-start LLM-DHRP)")
 
-    # Prepare text embeddings
+    # Prepare text embeddings — L2-norm + [mean,max] concat (anisotropy fix)
     text_embs = None
+    text_dim_actual = text_dim
     if use_text and text_features is not None:
         if "finbert" in text_features and text_features["finbert"] is not None:
             fb = text_features["finbert"]
             n_text = min(fb.shape[0], n_samp)
-            text_embs = fb[:n_text].mean(axis=1)
+            text_embs = aggregate_text_per_timestep(
+                fb[:n_text], method="norm_mean_max_concat"
+            )
+            text_dim_actual = text_embs.shape[1]
             if n_text < n_samp:
-                pad = np.zeros((n_samp - n_text, text_embs.shape[1]), dtype=np.float32)
+                pad = np.zeros((n_samp - n_text, text_dim_actual), dtype=np.float32)
                 text_embs = np.vstack([text_embs, pad])
-            print(f"  [{mkt}] Text features: {text_embs.shape}")
+            print(f"  [{mkt}] Text features: {text_embs.shape} (norm_mean_max_concat)")
 
     # Prepare macro features
     macro_feats = None
@@ -348,7 +359,7 @@ def train_llm_dhrp_warmstart(
     hidden_dim_val = 64
 
     model = LLMDHRPLayer(
-        n_assets=n_assets, feature_dim=fdim_actual, text_dim=text_dim,
+        n_assets=n_assets, feature_dim=fdim_actual, text_dim=text_dim_actual,
         hidden_dim=hidden_dim_val, depth=depth, is_em=is_em,
         use_text=use_text and text_embs is not None,
         use_macro=use_macro and macro_feats is not None,
