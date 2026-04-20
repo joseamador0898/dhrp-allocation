@@ -16,7 +16,9 @@ fredapi
 seaborn
 matplotlib
 
-# LLM features (install when running FinBERT extraction)
+# LLM features (install when running FinBERT or FinLang extraction)
 transformers>=4.46
 tokenizers>=0.20
 huggingface-hub>=0.26
+sentence-transformers>=3.0  # for FinLang/finance-embeddings-investopedia
+scikit-learn>=1.3  # for ZCA whitening + regime probe
