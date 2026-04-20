@@ -178,6 +178,137 @@ def get_finbert_embeddings(headlines, batch_size=None, device="cuda",
     return raw
 
 
+def build_temporal_text_tensor(
+    sample_dates,
+    universe_tickers,
+    headlines_df,
+    headline_to_emb,
+    lookback_days=60,
+    min_headlines=3,
+    train_end=None,
+):
+    """Build a time-varying per-asset text tensor for training and backtest.
+
+    Fixes the critical bug where `np.tile(prior_embs, (n_samp, 1, 1))` produced
+    identical text features at every timestep — making per-timestep cosine
+    similarity collapse to 1.0 regardless of embedding model.
+
+    For each sample date t and each asset a, average headline embeddings from
+    the window [t - lookback_days, t] for that asset. If fewer than
+    min_headlines, fall back in priority:
+      1. Asset's embedding from the previous successful date (temporal smoothing)
+      2. Market-wide average over the same window
+      3. All-time market average
+
+    Args:
+        sample_dates: pd.DatetimeIndex of length n_samp (from build_dataset
+                      with return_dates=True)
+        universe_tickers: dict like UNIVERSES['DM']; ordered ticker list
+        headlines_df: DataFrame with columns [date, ticker, headline]
+        headline_to_emb: dict mapping headline string -> np.ndarray embedding
+        lookback_days: rolling window size for text aggregation
+        min_headlines: minimum headlines in window to avoid fallback
+        train_end: if set, use prior-only text for dates after train_end
+                   (prevents look-ahead in OOS backtest)
+    Returns:
+        train_tensor: (n_samp, n_assets, emb_dim) np.float32
+        pit_dict: {pd.Timestamp: (n_assets, emb_dim)} for date-keyed lookup
+    """
+    import pandas as pd
+
+    if not headline_to_emb:
+        return None, {}
+
+    emb_dim = next(iter(headline_to_emb.values())).shape[-1]
+    ticker_list = list(universe_tickers.values())
+    n_assets = len(ticker_list)
+    n_samp = len(sample_dates)
+
+    hdl_df = headlines_df.copy()
+    if "date" in hdl_df.columns:
+        hdl_df["date"] = pd.to_datetime(hdl_df["date"], errors="coerce")
+    else:
+        hdl_df["date"] = pd.NaT
+
+    # Global market fallback (all-time average)
+    all_embs = list(headline_to_emb.values())
+    market_fallback = (
+        np.mean(all_embs, axis=0).astype(np.float32)
+        if all_embs
+        else np.zeros(emb_dim, dtype=np.float32)
+    )
+
+    cutoff = pd.Timestamp(train_end) if train_end is not None else None
+
+    def _window_emb(ticker, date_end, market_window_emb):
+        """Mean embedding for a ticker's headlines in [date_end - lookback, date_end]."""
+        window_start = date_end - pd.Timedelta(days=lookback_days)
+        mask = (
+            (hdl_df["ticker"] == ticker)
+            & (hdl_df["date"].notna())
+            & (hdl_df["date"] >= window_start)
+            & (hdl_df["date"] <= date_end)
+        )
+        rows = hdl_df[mask]["headline"].tolist()
+        embs = [headline_to_emb[h] for h in rows if h in headline_to_emb]
+        if len(embs) >= min_headlines:
+            return np.mean(embs, axis=0).astype(np.float32)
+        return market_window_emb  # fallback
+
+    def _market_window_emb(date_end):
+        window_start = date_end - pd.Timedelta(days=lookback_days)
+        mask = (
+            hdl_df["date"].notna()
+            & (hdl_df["date"] >= window_start)
+            & (hdl_df["date"] <= date_end)
+        )
+        rows = hdl_df[mask]["headline"].tolist()
+        embs = [headline_to_emb[h] for h in rows if h in headline_to_emb]
+        if len(embs) >= min_headlines:
+            return np.mean(embs, axis=0).astype(np.float32)
+        return market_fallback
+
+    # Training tensor: for each sample date, use prior-only text (≤ train_end
+    # if specified, else ≤ sample_date itself — but sample dates are already
+    # constrained to <= train_end by build_dataset when train_end is passed).
+    train_tensor = np.zeros((n_samp, n_assets, emb_dim), dtype=np.float32)
+    prev_per_asset = [None] * n_assets  # temporal smoothing carry
+    coverage = np.zeros(n_assets, dtype=int)
+
+    for i, dt in enumerate(sample_dates):
+        effective_date = dt
+        if cutoff is not None and dt > cutoff:
+            effective_date = cutoff  # clamp to prevent look-ahead during training
+        mkt = _market_window_emb(effective_date)
+        for j, ticker in enumerate(ticker_list):
+            emb = _window_emb(ticker, effective_date, mkt)
+            # Prefer per-asset fresh > per-asset previous > market fallback
+            if np.allclose(emb, mkt) and prev_per_asset[j] is not None:
+                train_tensor[i, j] = prev_per_asset[j]
+            else:
+                train_tensor[i, j] = emb
+                if not np.allclose(emb, mkt):
+                    prev_per_asset[j] = emb
+                    coverage[j] += 1
+
+    # Point-in-time dict for backtest: lookup by date, uses true prior window
+    pit_dict = {}
+    for dt in sample_dates:
+        ts = pd.Timestamp(dt)
+        mkt = _market_window_emb(ts)
+        assets = np.zeros((n_assets, emb_dim), dtype=np.float32)
+        for j, ticker in enumerate(ticker_list):
+            assets[j] = _window_emb(ticker, ts, mkt)
+        pit_dict[ts] = assets
+
+    print(
+        f"    Temporal coverage: min={coverage.min()} max={coverage.max()} "
+        f"mean={coverage.mean():.0f} samples-with-own-headlines per asset "
+        f"(lookback={lookback_days}d, min={min_headlines} headlines)"
+    )
+    return train_tensor, pit_dict
+
+
 def aggregate_text_per_timestep(fb, method="norm_mean_max_concat"):
     """Aggregate per-asset text embeddings into a per-timestep feature vector.
 

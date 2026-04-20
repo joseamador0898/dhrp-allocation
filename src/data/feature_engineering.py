@@ -76,7 +76,7 @@ def make_features(rets, fdim=DEFAULT_FDIM, is_em=False, volume=None):
 
 
 def build_dataset(prices, window=252, step=5, is_em=False, volume=None, fdim=DEFAULT_FDIM,
-                   train_end=None):
+                   train_end=None, return_dates=False):
     """Build training dataset: features, covariances, forward returns, HRP weights.
 
     Args:
@@ -87,11 +87,14 @@ def build_dataset(prices, window=252, step=5, is_em=False, volume=None, fdim=DEF
         volume: DataFrame of daily volume (same date index as prices), or None
         fdim: feature dimension
         train_end: if provided, only use data up to this date for training samples
+        return_dates: if True, also return sample dates (rets.index[t] for each
+                      sample) so callers can build time-varying auxiliary features
+                      (e.g. per-timestep text embeddings) aligned with the dataset
     Returns:
-        (X, S, R, H) tuple of numpy arrays
+        (X, S, R, H) tuple, or (X, S, R, H, dates) if return_dates=True
     """
     rets = prices.pct_change().dropna()
-    X, S, R, H = [], [], [], []
+    X, S, R, H, D = [], [], [], [], []
     fwd = 3 if is_em else 5
 
     # Limit training samples to avoid look-ahead bias
@@ -128,7 +131,14 @@ def build_dataset(prices, window=252, step=5, is_em=False, volume=None, fdim=DEF
         S.append(cov.astype(np.float32))
         R.append(fwd_r.astype(np.float32))
         H.append(hrp_w.astype(np.float32))
+        D.append(rets.index[t - 1])  # last date in the feature window
 
     if X:
-        return np.stack(X), np.stack(S), np.stack(R), np.stack(H)
-    return np.empty((0,)), np.empty((0,)), np.empty((0,)), np.empty((0,))
+        result = (np.stack(X), np.stack(S), np.stack(R), np.stack(H))
+        if return_dates:
+            return result + (pd.DatetimeIndex(D),)
+        return result
+    empty = (np.empty((0,)), np.empty((0,)), np.empty((0,)), np.empty((0,)))
+    if return_dates:
+        return empty + (pd.DatetimeIndex([]),)
+    return empty
