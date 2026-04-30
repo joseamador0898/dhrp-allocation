@@ -1,0 +1,45 @@
+\begin{abstract}
+We introduce \textbf{DHRP}, a differentiable extension of Hierarchical Risk
+Parity \citep{LopezdePrado2016} that replaces hard agglomerative clustering
+and recursive bisection with a temperature-scaled soft-gating tree, and
+\textbf{the DHRP-8 benchmark}, the first multi-universe portfolio
+evaluation framework reporting Probabilistic Sharpe Ratios
+\citep{Bailey2012PSR} alongside Fama--French
+\citep{FamaFrench2015,Carhart1997} and AQR commodity factor alphas
+\citep{AsnessMoskowitzPedersen2013} under multi-seed ($n=10$) protocols
+across eight ETF asset classes (developed markets, emerging markets,
+commodities, sectors, global multi-asset, factors, crypto, and bonds).
+We evaluate eleven methods including DHRP, an LLM-augmented variant
+(LLM-DHRP), six classical baselines (EW, MV, MINVAR, HRP, RP, MAXDIV),
+and three deep baselines (MLP, Transformer, PPO).
+%
+DHRP achieves statistically significant out-of-sample Sharpe ratios of
+$\mathbf{1.015 \pm 0.07}$ on commodities ($\text{PSR}=0.992$, FF3
+$\alpha_{ann}=16.1\%$, $t=2.49$, $p=0.013$) and
+$\mathbf{1.268 \pm 0.05}$ on crypto ($\text{PSR}=0.990$), beats classical
+HRP in five of eight universes, and is statistically indistinguishable
+from the best method in commodities, crypto, sectors, and factors
+(Model Confidence Set).
+%
+However, DHRP underperforms classical mean-variance in equity-heavy
+universes (DM, EM, global multi-asset), which we trace to lower
+correlation diversity and dominance of factor-based momentum signals
+that are well-captured by simple covariance estimation. The Superior
+Predictive Ability test rejects no method against equal-weight at the 5\%
+level ($p=0.30$), supporting an asset-class-contingent view of allocation.
+%
+We further test cross-modal LLM augmentation by fusing FinBERT
+\citep{Huang2023} embeddings of asset-attributed financial news into the
+soft-gating tree. Under multi-seed reporting, LLM augmentation provides
+\emph{no statistical benefit}---tied with DHRP in DM/EM and \emph{regressing}
+in commodities ($0.773 \pm 0.121$ vs.\ DHRP $1.015$, $\Delta=-0.24$ Sharpe).
+This honest negative ablation contrasts with single-seed claims in the
+recent LLM-finance literature \citep{Kirtac2025} and aligns with
+benchmark-paper precedents that LLMs do not reliably improve time-series
+prediction \citep{Tan2024AreLMs,Wang2025StockBench}.
+%
+We release the 8-universe dataset (Croissant~1.1 metadata, public ETF
+prices and headlines), trained model checkpoints across 10 seeds, and a
+single-command reproduction pipeline, providing the community with a
+calibrated benchmark for future portfolio optimization research.
+\end{abstract}

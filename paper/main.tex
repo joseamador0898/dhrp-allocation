@@ -1,0 +1,88 @@
+% =====================================================================
+% NeurIPS 2026 Evaluations & Datasets track build of:
+%   "DHRP: A Differentiable Hierarchical Risk Parity Architecture
+%    and Multi-Universe Portfolio Benchmark"
+%
+% Track:    Evaluations & Datasets (E&D)
+% Format:   single-column, 10pt Times, US Letter
+% Pages:    9 main + unlimited references / appendix / checklist
+%
+% Style file: neurips_2026.sty
+%   Download from: https://www.overleaf.com/latex/templates/
+%     formatting-instructions-for-neurips-2026/bjdwqfdkyftc
+%   Place neurips_2026.sty + checklist.tex in this directory.
+%
+% Build:
+%   pdflatex main ; bibtex main ; pdflatex main ; pdflatex main
+% =====================================================================
+\documentclass{article}
+
+% Track option:
+%   [eandd]                      : E&D track (DEFAULT for this paper)
+%   [eandd, final]               : camera-ready (shows author block)
+%   [eandd, preprint]            : arXiv (shows author block, no NeurIPS footer)
+%   [eandd, nonanonymous]        : single-blind option for E&D track only
+\usepackage[eandd]{neurips_2026}
+
+\usepackage{times}
+\usepackage{amsmath, amssymb, amsthm}
+\usepackage{graphicx}
+\usepackage{booktabs}
+\usepackage{hyperref}
+\usepackage{natbib}
+\usepackage{algorithm}
+\usepackage{algorithmic}
+\usepackage{subcaption}
+\usepackage{multirow}
+\usepackage{xcolor}
+\usepackage{microtype}
+\usepackage{url}
+\usepackage{siunitx}
+
+\newtheorem{proposition}{Proposition}
+
+% Figures live in paper/figures/ relative to this file
+\graphicspath{{figures/}{../results/figures/}}
+
+\title{DHRP: A Differentiable Hierarchical Risk Parity Architecture\\
+  and Multi-Universe Portfolio Benchmark}
+
+% Authors: ANONYMIZED for double-blind submission.
+% For [eandd, final] camera-ready, replace with:
+%   \author{Jose L. Amador \\ \texttt{jlaj@connect.ust.hk}}
+\author{Anonymous Authors}
+
+\begin{document}
+\maketitle
+
+\input{sections/abstract}
+
+\input{sections/01_introduction}
+
+\input{sections/02_related_work}
+
+\input{sections/03_method}
+
+\input{sections/04_benchmark_design}
+
+\input{sections/05_results}
+
+\input{sections/06_llm_negative_ablation}
+
+\input{sections/07_limitations_discussion}
+
+\input{sections/08_conclusion}
+
+\clearpage
+\bibliographystyle{plainnat}
+\bibliography{references}
+
+% NeurIPS 2026 mandatory paper checklist (auto-included by neurips_2026.sty
+% or via \input{checklist}). Does NOT count toward 9-page main limit.
+\input{checklist}
+
+\newpage
+\appendix
+\input{sections/appendix}
+
+\end{document}

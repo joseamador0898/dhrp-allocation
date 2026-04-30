@@ -1,0 +1,135 @@
+% =====================================================================
+% APPENDIX (unlimited pages, does NOT count toward 9-page main limit)
+% =====================================================================
+
+\section{Proof of Proposition~\ref{prop:recovery}}
+\label{app:proof}
+
+% TODO: full proof, ~1 page
+
+% Sketch:
+% (1) Show that under temperature $\tau \to 0$, each soft-gate
+%     softmax(g_k(h)/tau) concentrates on argmax(g_k(h)).
+% (2) Show that the soft assignment matrix A with one-hot rows reduces
+%     to classical HRP's quasi-diagonal cluster membership.
+% (3) Show that when the inverse-volatility blending parameter
+%     alpha = 1, the leaf budgets correspond exactly to HRP's
+%     recursive bisection.
+% (4) Show that single-linkage agglomerative clustering on D_ij induces
+%     the same tree as the converged gating decisions for an appropriate
+%     parameterization.
+% Conclude: DHRP weight vector equals classical HRP weight vector.
+
+\begin{proof}[Proof of Proposition~\ref{prop:recovery}]
+% TODO
+\end{proof}
+
+\section{Hyperparameters}
+\label{app:hyperparams}
+
+% TODO: per-universe hyperparameter table from src/data/universe_config.py
+
+\begin{table}[h]
+\caption{Per-universe hyperparameters used in DHRP-8. Tree depth, lookback
+window, rebalance frequency, covariance shrinkage, and HRP regularization
+schedule are tuned per asset class.}
+\label{tab:hyperparams}
+\centering
+\small
+\begin{tabular}{lcccccc}
+\toprule
+Universe & Lookback & Rebalance & Tree depth & Cov shrinkage & HRP $\lambda_{\text{start}\to\text{end}}$ & Text gate bias \\
+\midrule
+DM           & 252 & 21 & 2 & $10^{-6}$ & $0.30 \to 0.05$ & $-1.0$ \\
+EM           & 252 & 21 & 2 & $10^{-3}$ & $0.30 \to 0.05$ & $-1.0$ \\
+Commodities  & 63  & 5  & 2 & $10^{-2}$ & $0.50 \to 0.10$ & $-0.5$ \\
+Sectors      & 252 & 21 & 2 & $10^{-6}$ & $0.30 \to 0.05$ & $-1.0$ \\
+Global       & 252 & 21 & 3 & $10^{-5}$ & $0.30 \to 0.05$ & $-1.0$ \\
+Factors      & 252 & 21 & 3 & $10^{-5}$ & $0.30 \to 0.05$ & --- \\
+Crypto       & 63  & 5  & 2 & $2{\cdot}10^{-2}$ & $0.30 \to 0.05$ & $-0.5$ \\
+Bonds        & 252 & 21 & 2 & $10^{-5}$ & $0.30 \to 0.05$ & --- \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+\paragraph{Training protocol.} 60 epochs (DM/CMD), 50 epochs (EM); cosine
+annealing learning rate $6 \cdot 10^{-4}$ peak, $3 \cdot 10^{-5}$ floor.
+AdamW optimizer. Weight decay $3 \cdot 10^{-4}$ (DM), $10^{-3}$ (EM).
+Gradient clipping at norm 1.0 (DM), 0.5 (EM). Multi-seed: $S = 10$ seeds
+$\{0, 1, \ldots, 9\}$. Out-of-sample window: 2020-07 to 2026-04.
+Purge gap: 5 trading days between train and test windows.
+
+\section{Full Results Tables}
+\label{app:full_tables}
+
+% TODO: full method x universe x metric tables
+% Sharpe, Sortino, Calmar, MaxDD, CVaR_5, VaR_5, Omega, CER, Ann_Return,
+% Ann_Vol, HAC_t, CI_lo, CI_hi, FF3 alpha, FF3 t, FF3 p, R^2_adj,
+% Beta_Mkt-RF, Beta_SMB, Beta_HML, Beta_RMW, Beta_CMA, Beta_Mom
+
+% Tables drawn from results/{universe}_full_stats.csv files,
+% one universe per page.
+
+\section{Additional Ablations and Sensitivity Analysis}
+\label{app:additional}
+
+\subsection*{Tree depth ablation}
+% TODO: depth = {2, 3, 4} sweep table
+
+\subsection*{Loss component ablation}
+% TODO: ablate HRP-reg, Sharpe, CRRA, turnover penalty independently
+
+\subsection*{Text fusion ablation}
+% TODO: cross-attention vs concat vs additive vs no-text
+
+\subsection*{Transaction cost sensitivity}
+% TODO: Sharpe at 0/5/10/20/50 bps, breakeven cost vs EW
+
+\subsection*{Sub-period (regime) analysis}
+% TODO: 5 macro regimes (pre-COVID, COVID crash, recovery, rate hikes, post-hike)
+
+\subsection*{Multi-seed convergence}
+% TODO: Sharpe distribution across 10 seeds per universe (boxplot)
+
+\section{Croissant 1.1 Metadata}
+\label{app:croissant}
+
+% TODO: include the JSON-LD inline or as a listing
+% (full file in supplementary materials, data/croissant/dhrp-8universe.json)
+
+The DHRP-8 benchmark is published with Croissant 1.1 metadata
+\citep{Akhtar2024Croissant} satisfying the NeurIPS 2026 E\&D track
+mandatory metadata standard. Key fields:
+
+\begin{itemize}
+  \item \textbf{Distribution}: 8 universe sub-datasets (CSV) + Fama-French
+    factor file + asset-attributed news headlines (parquet).
+  \item \textbf{Schema}: Date (ISO~8601), Ticker, Adjusted Close (USD),
+    Volume, plus universe-specific columns.
+  \item \textbf{Train/test splits}: Fixed by date. Train: 2012-04 to
+    2020-06; Test: 2020-07 to 2026-04. Crypto train: 2020-07 to 2022-12.
+  \item \textbf{Responsible-AI metadata}: Survivorship bias warning
+    (static ETF universes; no delisting); known data gaps (CPER late
+    inception); license: ETF prices are public domain via Yahoo Finance;
+    headlines under fair-use research exemption.
+  \item \textbf{Persistent hosting}: HuggingFace Datasets (anonymized
+    URL during review).
+\end{itemize}
+
+\section{Reproducibility Checklist Notes}
+\label{app:repro_notes}
+
+% TODO: detailed notes on the NeurIPS paper checklist answers
+% Compute budget, GPU type, total hours
+% Random seeds list, deterministic torch settings
+% Exact pip versions in requirements-frozen.txt
+% Anonymized GitHub link
+% Single-command reproduction: scripts/reproduce_all.sh
+
+\paragraph{Compute budget.} Total training compute for the multi-seed
+run reported in Table~\ref{tab:headline}: approximately 10~GPU-hours on
+NVIDIA T4 (Google Colab Pro). Each seed-universe pair takes
+$\sim$5 minutes for DHRP and $\sim$8 minutes for LLM-DHRP. Backtest is
+CPU-bound and takes $\sim$2 minutes per seed-universe pair. Full
+end-to-end reproduction including FinBERT embedding extraction:
+$\sim$15~GPU-hours.

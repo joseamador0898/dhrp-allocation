@@ -1,0 +1,119 @@
+\section{Method}
+\label{sec:method}
+
+% --- 1.5 pages ---
+
+\subsection{Classical HRP recap}
+\label{sec:hrp_recap}
+
+% TODO: 0.25 page - state classical HRP in 5 lines
+% Distance D_ij = sqrt(0.5 * (1 - rho_ij)), single-linkage clustering,
+% quasi-diagonalization, recursive bisection with inverse-volatility weights.
+
+\subsection{DHRP: a differentiable soft-gating tree}
+\label{sec:dhrp_layer}
+
+DHRP maps a feature vector $x_t \in \mathbb{R}^f$ and an annualized
+covariance matrix $\Sigma_t \in \mathbb{R}^{n \times n}$ to portfolio
+weights $w_t \in \Delta^{n-1}$ via four learnable components:
+% TODO: figure 1 - architecture diagram
+% \begin{figure}[t]
+%   \centering
+%   \includegraphics[width=0.95\textwidth]{architecture.pdf}
+%   \caption{DHRP and LLM-DHRP architectures.}
+%   \label{fig:arch}
+% \end{figure}
+
+\paragraph{Feature fusion.}
+A cov-projection MLP $f_{\text{cov}}: \mathbb{R}^{n^2} \to \mathbb{R}^f$
+encodes the flattened normalized covariance, then layer-norm fuses with
+price features:
+\begin{equation}
+h_t = \mathrm{LayerNorm}\left(x_t + f_{\text{cov}}\!\left(
+\frac{\mathrm{vec}(\Sigma_t)}{\|\Sigma_t\|_\infty + \epsilon}\right)\right).
+\end{equation}
+
+\paragraph{Soft-gating tree.}
+A perfect binary tree of depth $L$ has $2^L$ leaves and $2^L-1$ internal
+nodes. Each internal node $k$ has a gate
+$g_k: \mathbb{R}^f \to \mathbb{R}^2$ producing routing probabilities:
+\begin{equation}
+\pi_k = \mathrm{softmax}(g_k(h_t) / \tau_k),
+\quad \tau_k = \exp(\theta_{\tau,k}) \in (0.1, 5.0].
+\label{eq:gates}
+\end{equation}
+The leaf budget for leaf $\ell$ along path $P_\ell$ is
+$p_\ell = \prod_{(k, b) \in P_\ell} \pi_k[b]$, then normalized by a
+learned leaf prior $\beta = \mathrm{softmax}(\theta_\beta)$:
+$b_\ell = \beta_\ell p_\ell / \sum_j \beta_j p_j$.
+
+\paragraph{Soft asset assignment.}
+A learnable matrix $A \in \mathbb{R}^{n \times 2^L}$ row-normalizes via
+softmax; asset $i$'s share of leaf budgets is
+\begin{equation}
+a_i = \sum_{\ell} \mathrm{softmax}(A_{i,:})_\ell \cdot b_\ell.
+\end{equation}
+
+\paragraph{Volatility blending.}
+Final weights blend the tree-derived $a$ with inverse-volatility:
+\begin{equation}
+w_i = \alpha \cdot a_i + (1-\alpha) \cdot
+\frac{1/\sigma_i}{\sum_j 1/\sigma_j},
+\qquad \alpha = \sigma(\theta_\alpha),
+\label{eq:blend}
+\end{equation}
+followed by a non-negativity clip and re-normalization.
+
+\paragraph{Loss.}
+A multi-objective loss combines CRRA utility, smooth Sharpe, HRP
+regularization (curriculum-scheduled), risk penalty, concentration (HHI),
+and turnover penalty:
+\begin{equation}
+\mathcal{L}_{\text{DHRP}} = -(\mathrm{CRRA} + \mathrm{Sharpe} +
+\lambda_e \mathrm{Entropy}) +
+\lambda_h \|w - w_{\text{HRP}}\|_2^2 +
+\lambda_r w^\top \Sigma w +
+\lambda_c \mathrm{HHI}(w) +
+\lambda_t \mathrm{TO}(w).
+\end{equation}
+The HRP regularizer anchors $w$ to classical HRP weights $w_{\text{HRP}}$
+with $\lambda_h$ decayed from $0.3 \to 0.05$ over training, providing a
+warm-start that recovers HRP at $\tau \to 0$ (Proposition~\ref{prop:recovery}).
+
+\begin{proposition}[HRP recovery]
+\label{prop:recovery}
+For any covariance $\Sigma$ such that the agglomerative clustering yields
+a unique tree $T^*$, there exists a parameter setting
+$(\theta_\tau, \theta_\beta, A) \to \theta^*$ and temperature
+$\tau_k \to 0$ under which the DHRP layer (Eqs.~\ref{eq:gates}--\ref{eq:blend})
+produces weights identical to classical HRP applied to $\Sigma$.
+\end{proposition}
+
+\noindent\textit{Proof sketch.} Hard-route gates concentrate on the
+HRP cluster split direction; the soft-assignment $A$ with one-hot rows
+recovers leaf membership; $\alpha = 1$ disables the inverse-vol blend.
+Full proof in Appendix~\ref{app:proof}.
+
+\subsection{LLM-DHRP: cross-modal fusion}
+\label{sec:llm_dhrp_arch}
+
+LLM-DHRP extends DHRP by injecting per-asset, time-varying text features
+$T_t \in \mathbb{R}^{n \times d_T}$ derived from financial news headlines.
+Headlines for asset $a$ within a 90-day rolling window are encoded by
+FinBERT \citep{Huang2023} ($d_T = 768$), L2-normalized per asset, then
+aggregated via concatenated mean and max-pool to $\mathbb{R}^{2 d_T}$
+(see Section~\ref{sec:benchmark} for coverage details). A
+TextProjection MLP maps to $\mathbb{R}^f$, fused with $h_t$ via gated
+cross-attention:
+\begin{equation}
+\hat h_t = h_t + g_{\text{text}} \cdot
+\mathrm{CrossAttn}(h_t, T_t^{\text{proj}}, T_t^{\text{proj}}),
+\quad g_{\text{text}} = \sigma(\theta_g - 1.0),
+\end{equation}
+with gate bias $-1.0$ initially suppressing text. Modality dropout
+(probability 0.1) randomly masks text during training, preventing
+pathway collapse. Training uses warm-start from a pretrained DHRP:
+phase~1 freezes price-pathway parameters and trains text/fusion only;
+phase~2 unfreezes all with reduced learning rate. The full training
+recipe and ablations on fusion variants are in
+Appendix~\ref{app:hyperparams}.

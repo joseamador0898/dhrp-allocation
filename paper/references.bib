@@ -1,0 +1,511 @@
+% =====================================================================
+% References for "DHRP: A Differentiable Hierarchical Risk Parity
+% Architecture and Multi-Universe Portfolio Benchmark"
+%
+% NeurIPS 2026 E&D track submission.
+% =====================================================================
+
+% ---------------------------------------------------------------------
+% Hierarchical Risk Parity foundations
+% ---------------------------------------------------------------------
+
+@article{LopezdePrado2016,
+  title={Building Diversified Portfolios that Outperform Out of Sample},
+  author={L{\'o}pez de Prado, Marcos},
+  journal={The Journal of Portfolio Management},
+  volume={42},
+  number={4},
+  pages={59--69},
+  year={2016},
+  doi={10.3905/jpm.2016.42.4.059}
+}
+
+@article{Raffinot2018,
+  title={Hierarchical Clustering-Based Asset Allocation},
+  author={Raffinot, Thomas},
+  journal={The Journal of Portfolio Management},
+  volume={44},
+  number={2},
+  pages={89--99},
+  year={2018}
+}
+
+@book{Roncalli2013,
+  title={Introduction to Risk Parity and Budgeting},
+  author={Roncalli, Thierry},
+  publisher={Chapman and Hall/CRC},
+  year={2013}
+}
+
+% ---------------------------------------------------------------------
+% Differentiable optimization layers
+% ---------------------------------------------------------------------
+
+@inproceedings{Amos2017,
+  title={{OptNet}: Differentiable Optimization as a Layer in Neural Networks},
+  author={Amos, Brandon and Kolter, J. Zico},
+  booktitle={International Conference on Machine Learning (ICML)},
+  pages={136--145},
+  year={2017},
+  note={\url{https://arxiv.org/abs/1703.00443}}
+}
+
+@inproceedings{Agrawal2019,
+  title={Differentiable Convex Optimization Layers},
+  author={Agrawal, Akshay and Amos, Brandon and Barratt, Shane
+    and Boyd, Stephen and Diamond, Steven and Kolter, J. Zico},
+  booktitle={Advances in Neural Information Processing Systems (NeurIPS)},
+  year={2019},
+  note={\url{https://arxiv.org/abs/1910.12430}}
+}
+
+@inproceedings{Bolte2021,
+  title={Nonsmooth Implicit Differentiation for Machine Learning and Optimization},
+  author={Bolte, J{\'e}r{\^o}me and Le, Tam and Pauwels, Edouard
+    and Silveti-Falls, Antonio},
+  booktitle={Advances in Neural Information Processing Systems (NeurIPS)},
+  year={2021},
+  note={\url{https://arxiv.org/abs/2106.04350}}
+}
+
+@inproceedings{Yang2024BPQP,
+  title={{BPQP}: A Differentiable Convex Optimization Framework for Efficient End-to-End Learning},
+  author={Yang, Jianming and others},
+  booktitle={Advances in Neural Information Processing Systems (NeurIPS)},
+  year={2024},
+  note={\url{https://proceedings.neurips.cc/paper_files/paper/2024/file/8db12f7214d3a1a0c450ba751163e0fd-Paper-Conference.pdf}}
+}
+
+@inproceedings{Lin2024MSparse,
+  title={A Globally Optimal Portfolio for $m$-Sparse {S}harpe Ratio Maximization},
+  author={Lin, Yizun and others},
+  booktitle={Advances in Neural Information Processing Systems (NeurIPS)},
+  year={2024},
+  note={OpenReview: \url{https://openreview.net/forum?id=p54CYwdjVP}}
+}
+
+% ---------------------------------------------------------------------
+% Soft trees and hierarchical learning
+% ---------------------------------------------------------------------
+
+@misc{FrosstHinton2017,
+  title={Distilling a Neural Network Into a Soft Decision Tree},
+  author={Frosst, Nicholas and Hinton, Geoffrey},
+  year={2017},
+  eprint={1711.09784},
+  archivePrefix={arXiv},
+  primaryClass={cs.LG}
+}
+
+@inproceedings{Popov2020NODE,
+  title={Neural Oblivious Decision Ensembles for Deep Learning on Tabular Data},
+  author={Popov, Sergei and Morozov, Stanislav and Babenko, Artem},
+  booktitle={International Conference on Learning Representations (ICLR)},
+  year={2020},
+  note={\url{https://openreview.net/forum?id=r1eiu2VtwH}}
+}
+
+@inproceedings{Hazimeh2020TreeEnsemble,
+  title={The Tree Ensemble Layer: Differentiability meets Conditional Computation},
+  author={Hazimeh, Hussein and Ponomareva, Natalia and Mol, Petros and Tan, Zhenyu and Mazumder, Rahul},
+  booktitle={International Conference on Machine Learning (ICML)},
+  year={2020}
+}
+
+@inproceedings{NeurIPS2025DiffTree,
+  title={Differentiable Decision Trees via {ReLU}+{Argmin} Reformulation},
+  author={Anonymous},
+  booktitle={Advances in Neural Information Processing Systems (NeurIPS) (Spotlight)},
+  year={2025},
+  note={\url{https://neurips.cc/virtual/2025/poster/119074}}
+}
+
+@inproceedings{Shazeer2017,
+  title={Outrageously Large Neural Networks: The Sparsely-Gated Mixture-of-Experts Layer},
+  author={Shazeer, Noam and Mirhoseini, Azalia and Maziarz, Krzysztof and Davis, Andy and Le, Quoc and Hinton, Geoffrey and Dean, Jeff},
+  booktitle={International Conference on Learning Representations (ICLR)},
+  year={2017}
+}
+
+% ---------------------------------------------------------------------
+% Portfolio optimization (deep learning)
+% ---------------------------------------------------------------------
+
+@article{Markowitz1952,
+  title={Portfolio Selection},
+  author={Markowitz, Harry},
+  journal={The Journal of Finance},
+  volume={7},
+  number={1},
+  pages={77--91},
+  year={1952}
+}
+
+@article{DeMiguel2009,
+  title={Optimal Versus Naive Diversification: How Inefficient is the $1/N$ Portfolio Strategy?},
+  author={DeMiguel, Victor and Garlappi, Lorenzo and Uppal, Raman},
+  journal={The Review of Financial Studies},
+  volume={22},
+  number={5},
+  pages={1915--1953},
+  year={2009}
+}
+
+@article{Ledoit2004,
+  title={Honey, I Shrunk the Sample Covariance Matrix},
+  author={Ledoit, Olivier and Wolf, Michael},
+  journal={Journal of Portfolio Management},
+  volume={30},
+  number={4},
+  pages={110--119},
+  year={2004}
+}
+
+@article{Maillard2010,
+  title={The Properties of Equally Weighted Risk Contribution Portfolios},
+  author={Maillard, S{\'e}bastien and Roncalli, Thierry and Te{\"\i}letche, J{\'e}r{\^o}me},
+  journal={The Journal of Portfolio Management},
+  volume={36},
+  number={4},
+  pages={60--70},
+  year={2010}
+}
+
+@article{Choueifaty2008,
+  title={Toward Maximum Diversification},
+  author={Choueifaty, Yves and Coignard, Yves},
+  journal={The Journal of Portfolio Management},
+  volume={35},
+  number={1},
+  pages={40--51},
+  year={2008}
+}
+
+@article{Rockafellar2000,
+  title={Optimization of Conditional Value-at-Risk},
+  author={Rockafellar, R. Tyrrell and Uryasev, Stanislav},
+  journal={Journal of Risk},
+  volume={2},
+  pages={21--42},
+  year={2000}
+}
+
+@inproceedings{Zhang2020,
+  title={Deep Learning for Portfolio Optimization},
+  author={Zhang, Zihao and Zohren, Stefan and Roberts, Stephen},
+  journal={The Journal of Financial Data Science},
+  volume={2},
+  number={4},
+  pages={8--20},
+  year={2020}
+}
+
+@misc{KisielGorse2022,
+  title={Portfolio Transformer for Attention-Based Asset Allocation},
+  author={Kisiel, Damian and Gorse, Denise},
+  year={2022},
+  eprint={2206.03246},
+  archivePrefix={arXiv},
+  primaryClass={q-fin.PM}
+}
+
+@misc{ParraDiaz2025,
+  title={Deep Declarative Risk Budgeting Portfolios},
+  author={Parra-D{\'\i}az, M. and others},
+  year={2025},
+  eprint={2504.19980},
+  archivePrefix={arXiv}
+}
+
+@misc{KimLee2025DFL,
+  title={Decision-Focused Learning for Global Minimum Variance Portfolio},
+  author={Kim, Juchan and Tae, Inwoo and Lee, Yongjae},
+  year={2025},
+  note={ICAIF 2025; \url{https://icaif25.org/accepted-papers/}}
+}
+
+@misc{Cong2025,
+  title={{AlphaPortfolio}: LLM-Driven Alpha Factor Discovery for Portfolio Construction},
+  author={Cong, Lin William and others},
+  year={2025},
+  note={Working paper}
+}
+
+% ---------------------------------------------------------------------
+% Decision-focused learning
+% ---------------------------------------------------------------------
+
+@inproceedings{Wilder2019,
+  title={Melding the Data-Decisions Pipeline: Decision-Focused Learning for Combinatorial Optimization},
+  author={Wilder, Bryan and Dilkina, Bistra and Tambe, Milind},
+  booktitle={AAAI Conference on Artificial Intelligence},
+  year={2019}
+}
+
+@article{Elmachtoub2022SPO,
+  title={Smart ``Predict, then Optimize''},
+  author={Elmachtoub, Adam N. and Grigas, Paul},
+  journal={Management Science},
+  volume={68},
+  number={1},
+  pages={9--26},
+  year={2022}
+}
+
+@inproceedings{Donti2017,
+  title={Task-based End-to-end Model Learning in Stochastic Optimization},
+  author={Donti, Priya L. and Amos, Brandon and Kolter, J. Zico},
+  booktitle={Advances in Neural Information Processing Systems (NeurIPS)},
+  year={2017}
+}
+
+% ---------------------------------------------------------------------
+% LLMs in finance
+% ---------------------------------------------------------------------
+
+@misc{Araci2019,
+  title={{FinBERT}: Financial Sentiment Analysis with Pre-trained Language Models},
+  author={Araci, Dogu},
+  year={2019},
+  eprint={1908.10063},
+  archivePrefix={arXiv}
+}
+
+@article{Huang2023,
+  title={{FinBERT}: A Large Language Model for Extracting Information from Financial Text},
+  author={Huang, Allen H. and Wang, Hui and Yang, Yi},
+  journal={Contemporary Accounting Research},
+  volume={40},
+  number={2},
+  pages={806--841},
+  year={2023}
+}
+
+@misc{Wu2023BloombergGPT,
+  title={{BloombergGPT}: A Large Language Model for Finance},
+  author={Wu, Shijie and Irsoy, Ozan and Lu, Steven and Dabravolski, Vadim and Dredze, Mark and Gehrmann, Sebastian and Kambadur, Prabhanjan and Rosenberg, David and Mann, Gideon},
+  year={2023},
+  eprint={2303.17564},
+  archivePrefix={arXiv}
+}
+
+@inproceedings{Xie2024FinBen,
+  title={{FinBen}: A Holistic Financial Benchmark for Large Language Models},
+  author={Xie, Qianqian and others},
+  booktitle={Advances in Neural Information Processing Systems (NeurIPS) Datasets and Benchmarks Track},
+  year={2024},
+  note={\url{https://openreview.net/forum?id=loDHZstVP6}}
+}
+
+@inproceedings{Tan2024AreLMs,
+  title={Are Language Models Actually Useful for Time Series Forecasting?},
+  author={Tan, Mingtian and others},
+  booktitle={Advances in Neural Information Processing Systems (NeurIPS) (Spotlight)},
+  year={2024},
+  note={\url{https://openreview.net/forum?id=DV15UbHCY1}}
+}
+
+@misc{Wang2025StockBench,
+  title={{StockBench}: Can {LLM} Agents Trade Stocks Profitably In Real-World Markets?},
+  author={Wang, Yuhang and others},
+  year={2025},
+  eprint={2510.02209},
+  archivePrefix={arXiv},
+  note={\url{https://openreview.net/forum?id=9tFRj7cmrS}}
+}
+
+@misc{Kirtac2025,
+  title={Sentiment-Augmented {PPO} for Portfolio Optimization with {LLM} Sentiment Signals},
+  author={Kirtac, K. and others},
+  year={2025},
+  note={\url{https://openreview.net/pdf?id=TmEMshyG1Y}}
+}
+
+@inproceedings{FinLang2025,
+  title={Finance Embeddings for Investopedia: A Domain-Specific Sentence Transformer},
+  author={{FinLang Team}},
+  booktitle={HuggingFace Model Hub},
+  year={2025},
+  note={\url{https://huggingface.co/FinLang/finance-embeddings-investopedia}}
+}
+
+% ---------------------------------------------------------------------
+% Statistical battery
+% ---------------------------------------------------------------------
+
+@article{Bailey2012PSR,
+  title={The {S}harpe Ratio Efficient Frontier},
+  author={Bailey, David H. and L{\'o}pez de Prado, Marcos},
+  journal={Journal of Risk},
+  volume={15},
+  number={2},
+  pages={3--44},
+  year={2012}
+}
+
+@article{Bailey2014DSR,
+  title={The Deflated {S}harpe Ratio: Correcting for Selection Bias, Backtest Overfitting, and Non-Normality},
+  author={Bailey, David H. and L{\'o}pez de Prado, Marcos},
+  journal={Journal of Portfolio Management},
+  volume={40},
+  number={5},
+  pages={94--107},
+  year={2014}
+}
+
+@article{NeweyWest1987,
+  title={A Simple, Positive Semi-Definite, Heteroskedasticity and Autocorrelation Consistent Covariance Matrix},
+  author={Newey, Whitney K. and West, Kenneth D.},
+  journal={Econometrica},
+  volume={55},
+  number={3},
+  pages={703--708},
+  year={1987}
+}
+
+@article{JobsonKorkie1981,
+  title={Performance Hypothesis Testing with the {S}harpe and {T}reynor Measures},
+  author={Jobson, J. D. and Korkie, Bob M.},
+  journal={The Journal of Finance},
+  volume={36},
+  number={4},
+  pages={889--908},
+  year={1981}
+}
+
+@article{Memmel2003,
+  title={Performance Hypothesis Testing with the {S}harpe Ratio},
+  author={Memmel, Christoph},
+  journal={Finance Letters},
+  volume={1},
+  number={1},
+  pages={21--23},
+  year={2003}
+}
+
+@article{PolitisRomano1994,
+  title={The Stationary Bootstrap},
+  author={Politis, Dimitris N. and Romano, Joseph P.},
+  journal={Journal of the American Statistical Association},
+  volume={89},
+  number={428},
+  pages={1303--1313},
+  year={1994}
+}
+
+@article{Holm1979,
+  title={A Simple Sequentially Rejective Multiple Test Procedure},
+  author={Holm, Sture},
+  journal={Scandinavian Journal of Statistics},
+  volume={6},
+  number={2},
+  pages={65--70},
+  year={1979}
+}
+
+@article{DieboldMariano1995,
+  title={Comparing Predictive Accuracy},
+  author={Diebold, Francis X. and Mariano, Robert S.},
+  journal={Journal of Business \& Economic Statistics},
+  volume={13},
+  number={3},
+  pages={253--263},
+  year={1995}
+}
+
+@article{Hansen2005,
+  title={A Test for Superior Predictive Ability},
+  author={Hansen, Peter Reinhard},
+  journal={Journal of Business \& Economic Statistics},
+  volume={23},
+  number={4},
+  pages={365--380},
+  year={2005}
+}
+
+@article{HansenLundeNason2011,
+  title={The Model Confidence Set},
+  author={Hansen, Peter Reinhard and Lunde, Asger and Nason, James M.},
+  journal={Econometrica},
+  volume={79},
+  number={2},
+  pages={453--497},
+  year={2011}
+}
+
+@article{Carhart1997,
+  title={On Persistence in Mutual Fund Performance},
+  author={Carhart, Mark M.},
+  journal={The Journal of Finance},
+  volume={52},
+  number={1},
+  pages={57--82},
+  year={1997}
+}
+
+@article{FamaFrench2015,
+  title={A Five-Factor Asset Pricing Model},
+  author={Fama, Eugene F. and French, Kenneth R.},
+  journal={Journal of Financial Economics},
+  volume={116},
+  number={1},
+  pages={1--22},
+  year={2015}
+}
+
+@article{AsnessMoskowitzPedersen2013,
+  title={Value and Momentum Everywhere},
+  author={Asness, Clifford S. and Moskowitz, Tobias J. and Pedersen, Lasse H.},
+  journal={The Journal of Finance},
+  volume={68},
+  number={3},
+  pages={929--985},
+  year={2013}
+}
+
+% ---------------------------------------------------------------------
+% Optimal transport (for theoretical interpretation)
+% ---------------------------------------------------------------------
+
+@inproceedings{Cuturi2013Sinkhorn,
+  title={Sinkhorn Distances: Lightspeed Computation of Optimal Transport},
+  author={Cuturi, Marco},
+  booktitle={Advances in Neural Information Processing Systems (NeurIPS)},
+  year={2013}
+}
+
+% ---------------------------------------------------------------------
+% Benchmarking and meta-analysis
+% ---------------------------------------------------------------------
+
+@inproceedings{Reuel2024BetterBench,
+  title={{BetterBench}: Assessing {AI} Benchmarks, Uncovering Issues, and Establishing Best Practices},
+  author={Reuel, Anka and others},
+  booktitle={Advances in Neural Information Processing Systems (NeurIPS) Datasets and Benchmarks Track (Spotlight)},
+  year={2024},
+  note={\url{https://openreview.net/forum?id=hcOq2buakM}}
+}
+
+@inproceedings{Akhtar2024Croissant,
+  title={Croissant: A Metadata Format for {ML}-Ready Datasets},
+  author={Akhtar, Mubashara and others},
+  booktitle={Advances in Neural Information Processing Systems (NeurIPS) Datasets and Benchmarks Track},
+  year={2024},
+  note={\url{https://arxiv.org/abs/2403.19546}}
+}
+
+@inproceedings{Liu2024Elephant,
+  title={The Elephant in the Room: Towards A Reliable Time-Series Anomaly Detection Benchmark},
+  author={Liu, Qinghua and others},
+  booktitle={Advances in Neural Information Processing Systems (NeurIPS) Datasets and Benchmarks Track},
+  year={2024},
+  note={\url{https://openreview.net/forum?id=R6kJtWsTGy}}
+}
+
+@inproceedings{Cemri2025MASFail,
+  title={Why Do Multi-Agent {LLM} Systems Fail?},
+  author={Cemri, Mert and others},
+  booktitle={Advances in Neural Information Processing Systems (NeurIPS) Datasets and Benchmarks Track},
+  year={2025},
+  note={\url{https://openreview.net/forum?id=fAjbYBmonr}}
+}

@@ -1,0 +1,48 @@
+\section{Limitations and Discussion}
+\label{sec:limits}
+
+% --- 0.5 page ---
+
+\paragraph{When does DHRP win?}
+DHRP achieves significant alpha in commodities and crypto (PSR $> 0.99$)
+but underperforms classical mean-variance in equity-heavy universes
+(DM, EM, global multi-asset). The pattern suggests DHRP's hierarchical
+inductive bias is most valuable when (i)~average pairwise correlation
+is low ($<0.5$ in commodities and crypto vs.\ $>0.7$ in DM/EM equities)
+and (ii)~the cross-asset structure is regime-dependent rather than
+factor-dominated. In high-correlation factor-driven equity universes,
+the closed-form mean-variance solution exploits factor exposures more
+efficiently than soft-routing through a binary tree.
+
+\paragraph{Failed hypotheses.}
+We hypothesized that LLM augmentation would lift performance in
+commodity and crypto markets where narrative arguably matters more.
+The data does not support this under multi-seed reporting
+(Section~\ref{sec:llmablation}). We also hypothesized that deeper trees
+would capture finer cross-asset structure; ablation
+(Appendix~\ref{app:additional}) shows depth$=$3 is optimal in DM but
+the relationship is not stable across runs, suggesting current text
+and price features do not provide enough signal to support deeper
+gating networks.
+
+\paragraph{Threats to validity.}
+\textit{Survivorship bias.} Our ETF universes are static (no delisting
+adjustments); a small bias toward survived ETFs is documented in
+Appendix~\ref{app:croissant} as part of the Responsible-AI metadata.
+\textit{Backtest overfitting.} We use the Probabilistic Sharpe Ratio
+\citep{Bailey2012PSR} but not the Deflated Sharpe \citep{Bailey2014DSR},
+which would adjust for the implicit hyperparameter search across
+universes; we do not view this as material because we report
+out-of-sample numbers across all universes from the same protocol.
+\textit{Single-period OOS.} The OOS window 2020-07 to 2026-04 spans the
+COVID crash, recovery, rate-hike cycle, and post-hike regime.
+Results are robust within sub-periods (Appendix~\ref{app:additional})
+but a longer hold-out would strengthen claims.
+
+\paragraph{Future work.}
+Three directions: (i)~theoretical generalization bounds via covering
+numbers of the soft-gating tree (informal sketch in
+Appendix~\ref{app:proof}); (ii)~per-asset news coverage normalization to
+revisit LLM augmentation in commodity and crypto markets; and
+(iii)~combining DHRP with $m$-sparse selection \citep{Lin2024MSparse}
+to recover competitiveness in high-correlation equity universes.

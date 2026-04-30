@@ -1,0 +1,23 @@
+\section{Conclusion}
+\label{sec:conclusion}
+
+% --- 0.25 page ---
+
+We introduced \textbf{DHRP}, a differentiable extension of Hierarchical
+Risk Parity that recovers classical HRP as routing temperature
+$\tau \to 0$ (Proposition~\ref{prop:recovery}) while enabling
+end-to-end gradient training, and \textbf{DHRP-8}, the first
+multi-universe portfolio benchmark with multi-seed Probabilistic Sharpe
+Ratio reporting across eight asset classes and eleven methods. DHRP
+achieves significant out-of-sample alpha in commodities (FF3 $t=2.49$,
+AQR $t=4.00$, PSR $0.99$) and the highest Sharpe in crypto, beating
+classical HRP in five of eight universes. We document an honest
+negative result: under multi-seed reporting, FinBERT-based LLM
+augmentation provides no statistical lift and regresses in commodities,
+contrasting with single-seed claims in the recent literature.
+
+The benchmark, code, model checkpoints across 10 seeds, and Croissant 1.1
+metadata are released as supplementary materials. We hope DHRP-8 will
+serve as a calibrated reference for future work on differentiable
+portfolio optimization and provide the community with a structured
+testbed for honest evaluation of new methods.

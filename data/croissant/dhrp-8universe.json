@@ -1,0 +1,238 @@
+{
+  "@context": {
+    "@language": "en",
+    "@vocab": "https://schema.org/",
+    "citeAs": "cr:citeAs",
+    "column": "cr:column",
+    "conformsTo": "dct:conformsTo",
+    "cr": "http://mlcommons.org/croissant/",
+    "rai": "http://mlcommons.org/croissant/RAI/",
+    "data": {"@id": "cr:data", "@type": "@json"},
+    "dataType": {"@id": "cr:dataType", "@type": "@vocab"},
+    "dct": "http://purl.org/dc/terms/",
+    "examples": {"@id": "cr:examples", "@type": "@json"},
+    "extract": "cr:extract",
+    "field": "cr:field",
+    "fileProperty": "cr:fileProperty",
+    "fileObject": "cr:fileObject",
+    "fileSet": "cr:fileSet",
+    "format": "cr:format",
+    "includes": "cr:includes",
+    "isLiveDataset": "cr:isLiveDataset",
+    "jsonPath": "cr:jsonPath",
+    "key": "cr:key",
+    "md5": "cr:md5",
+    "parentField": "cr:parentField",
+    "path": "cr:path",
+    "recordSet": "cr:recordSet",
+    "references": "cr:references",
+    "regex": "cr:regex",
+    "repeated": "cr:repeated",
+    "replace": "cr:replace",
+    "sc": "https://schema.org/",
+    "separator": "cr:separator",
+    "source": "cr:source",
+    "subField": "cr:subField",
+    "transform": "cr:transform"
+  },
+  "@type": "sc:Dataset",
+  "name": "DHRP-8: Multi-Universe Portfolio Benchmark",
+  "description": "An 8-asset-class portfolio evaluation benchmark spanning developed markets, emerging markets, commodities, sectors, global multi-asset, factors, crypto, and bonds. Each universe contains 10 ETFs with daily prices and volume from 2012-04 to 2026-04, plus financial news headlines (2013-04 to 2026-04) and Fama-French / AQR factor data. Released with multi-seed (n=10) trained model checkpoints for 11 portfolio allocation methods including the novel DHRP architecture.",
+  "conformsTo": "http://mlcommons.org/croissant/1.1",
+  "url": "https://anonymous.4open.science/r/DHRP-8-anonymized",
+  "version": "1.0.0",
+  "license": "CC-BY-4.0",
+  "datePublished": "2026-05-06",
+  "creator": [{"@type": "Person", "name": "Anonymous"}],
+  "publisher": {"@type": "Organization", "name": "Anonymous"},
+  "keywords": [
+    "portfolio optimization",
+    "hierarchical risk parity",
+    "differentiable optimization",
+    "multi-universe benchmark",
+    "Sharpe ratio",
+    "Fama-French factors",
+    "Probabilistic Sharpe Ratio",
+    "LLM-finance",
+    "FinBERT"
+  ],
+  "citeAs": "@inproceedings{anon2026dhrp, title={DHRP: A Differentiable Hierarchical Risk Parity Architecture and Multi-Universe Portfolio Benchmark}, author={Anonymous}, booktitle={NeurIPS 2026 Evaluations and Datasets Track}, year={2026}}",
+
+  "rai:dataCollection": "ETF prices and volumes are obtained from Yahoo Finance v8 API (public). Financial news headlines are scraped from Reuters, Bloomberg public RSS, GDELT 2.0, and SEC filings. FinBERT embeddings (768-dim) are extracted using the ProsusAI/finbert HuggingFace model. Fama-French factors via Kenneth French's online data library; AQR commodity Value/Momentum factors via AQR Capital Management's public research portal.",
+
+  "rai:dataBiases": "Static ETF universes do not adjust for delisting or universe changes between 2012 and 2026, introducing a small survivorship bias. CPER (commodities) and several factor ETFs have inception dates after 2012 and are filled with NaN until inception. The Crypto universe history is shorter (2020-2026 only) due to limited ETF availability before 2020.",
+
+  "rai:dataAnnotationProtocol": "All headlines are tagged with their primary ticker via either explicit metadata (Reuters/Bloomberg) or fuzzy matching against the universe ticker list. Headlines without a clear single-asset attribution are tagged as 'MARKET' and used as fallback when an asset has fewer than 2 headlines in a 90-day rolling window.",
+
+  "rai:personalSensitiveInformation": "None. The dataset contains only public market data and public news headlines. No individuals, no PII.",
+
+  "rai:dataReleaseMaintenancePlan": "Initial release at NeurIPS 2026 camera-ready (December 2026). Yearly updates to extend the OOS window. Versioned via DOI on Zenodo with persistent identifiers.",
+
+  "rai:annotationsPerExample": "1 (ticker attribution per headline)",
+
+  "distribution": [
+    {
+      "@type": "cr:FileObject",
+      "@id": "prices-csv-archive",
+      "name": "prices.tar.gz",
+      "description": "Tarball of 80 CSV files: one per (ticker, year), with columns Date, Open, High, Low, Close, Volume.",
+      "contentUrl": "https://anonymous.4open.science/api/repo/DHRP-8-anonymized/raw/main/data/prices.tar.gz",
+      "encodingFormat": "application/gzip",
+      "md5": "TBD-fill-after-final-build"
+    },
+    {
+      "@type": "cr:FileObject",
+      "@id": "headlines-parquet",
+      "name": "headlines.parquet",
+      "description": "All financial news headlines with ticker attribution and timestamps. Columns: date, ticker, headline, source, finbert_embedding (768-dim).",
+      "contentUrl": "https://anonymous.4open.science/api/repo/DHRP-8-anonymized/raw/main/data/headlines.parquet",
+      "encodingFormat": "application/parquet",
+      "md5": "TBD-fill-after-final-build"
+    },
+    {
+      "@type": "cr:FileObject",
+      "@id": "factors-csv",
+      "name": "factors.csv",
+      "description": "Daily Fama-French 5 + Momentum + AQR commodity factors aligned to ETF trading dates.",
+      "contentUrl": "https://anonymous.4open.science/api/repo/DHRP-8-anonymized/raw/main/data/factors.csv",
+      "encodingFormat": "text/csv",
+      "md5": "TBD-fill-after-final-build"
+    },
+    {
+      "@type": "cr:FileObject",
+      "@id": "checkpoints-archive",
+      "name": "checkpoints.tar.gz",
+      "description": "Trained model checkpoints across 10 seeds for DHRP, LLM-DHRP, MLP, Transformer, PPO, DFL on each of the 8 universes.",
+      "contentUrl": "https://anonymous.4open.science/api/repo/DHRP-8-anonymized/raw/main/results/models/checkpoints.tar.gz",
+      "encodingFormat": "application/gzip",
+      "md5": "TBD-fill-after-final-build"
+    }
+  ],
+
+  "recordSet": [
+    {
+      "@type": "cr:RecordSet",
+      "@id": "universes",
+      "name": "universes",
+      "description": "The 8 asset universes in DHRP-8.",
+      "field": [
+        {
+          "@type": "cr:Field",
+          "@id": "universes/universe_name",
+          "name": "universe_name",
+          "description": "Universe identifier",
+          "dataType": "sc:Text",
+          "examples": ["DM", "EM", "Commodities", "Sectors", "Global", "Factors", "Crypto", "Bonds"]
+        },
+        {
+          "@type": "cr:Field",
+          "@id": "universes/n_assets",
+          "name": "n_assets",
+          "description": "Number of assets",
+          "dataType": "sc:Integer"
+        },
+        {
+          "@type": "cr:Field",
+          "@id": "universes/lookback_window",
+          "name": "lookback_window",
+          "description": "Trading-day lookback for covariance and feature estimation",
+          "dataType": "sc:Integer"
+        },
+        {
+          "@type": "cr:Field",
+          "@id": "universes/rebalance_frequency",
+          "name": "rebalance_frequency",
+          "description": "Trading-day rebalance interval",
+          "dataType": "sc:Integer"
+        },
+        {
+          "@type": "cr:Field",
+          "@id": "universes/train_end_date",
+          "name": "train_end_date",
+          "description": "Final date of in-sample training window (ISO 8601)",
+          "dataType": "sc:Date"
+        },
+        {
+          "@type": "cr:Field",
+          "@id": "universes/oos_start_date",
+          "name": "oos_start_date",
+          "description": "First date of out-of-sample evaluation window (ISO 8601)",
+          "dataType": "sc:Date"
+        }
+      ]
+    },
+    {
+      "@type": "cr:RecordSet",
+      "@id": "prices",
+      "name": "prices",
+      "description": "Daily OHLCV per ticker.",
+      "field": [
+        {
+          "@type": "cr:Field",
+          "@id": "prices/date",
+          "name": "date",
+          "description": "Trading date (ISO 8601)",
+          "dataType": "sc:Date"
+        },
+        {
+          "@type": "cr:Field",
+          "@id": "prices/ticker",
+          "name": "ticker",
+          "description": "ETF ticker symbol",
+          "dataType": "sc:Text"
+        },
+        {
+          "@type": "cr:Field",
+          "@id": "prices/adj_close",
+          "name": "adj_close",
+          "description": "Adjusted close price (USD)",
+          "dataType": "sc:Number"
+        },
+        {
+          "@type": "cr:Field",
+          "@id": "prices/volume",
+          "name": "volume",
+          "description": "Daily trading volume (shares)",
+          "dataType": "sc:Integer"
+        }
+      ]
+    },
+    {
+      "@type": "cr:RecordSet",
+      "@id": "headlines",
+      "name": "headlines",
+      "description": "Financial news headlines with FinBERT embeddings.",
+      "field": [
+        {
+          "@type": "cr:Field",
+          "@id": "headlines/date",
+          "name": "date",
+          "description": "Headline publication date (ISO 8601)",
+          "dataType": "sc:Date"
+        },
+        {
+          "@type": "cr:Field",
+          "@id": "headlines/ticker",
+          "name": "ticker",
+          "description": "Primary attributed ticker, or 'MARKET' for cross-cutting headlines",
+          "dataType": "sc:Text"
+        },
+        {
+          "@type": "cr:Field",
+          "@id": "headlines/headline",
+          "name": "headline",
+          "description": "Headline text",
+          "dataType": "sc:Text"
+        },
+        {
+          "@type": "cr:Field",
+          "@id": "headlines/finbert_embedding",
+          "name": "finbert_embedding",
+          "description": "768-dimensional FinBERT [CLS]-pooled embedding (ProsusAI/finbert)",
+          "dataType": "sc:Number",
+          "repeated": true
+        }
+      ]
+    }
+  ]
+}

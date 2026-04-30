@@ -1,0 +1,72 @@
+\section{Related Work}
+\label{sec:related}
+
+% --- 0.75 page ---
+
+\paragraph{Hierarchical Risk Parity and variants.}
+HRP \citep{LopezdePrado2016} replaces inverse-covariance-based
+optimization with single-linkage agglomerative clustering and recursive
+bisection, generating diversified portfolios that remain stable across
+rebalancing periods. Subsequent work explored alternative linkage criteria
+\citep{Raffinot2018}, transaction-cost-sensitive rebalancing
+\citep{Roncalli2013}, and multi-step formulations.
+% TODO: Add 1-2 specific quant-finance references
+All retain HRP's non-differentiable clustering core.
+
+\paragraph{Differentiable optimization layers.}
+\citet{Amos2017} introduced OptNet for end-to-end QP layers.
+\citet{Agrawal2019} generalized via CVXPY layers, computing gradients
+through KKT conditions of arbitrary convex programs.
+\citet{Bolte2021} extended the theory to nonsmooth implicit
+differentiation. In portfolio optimization, BPQP \citep{Yang2024BPQP}
+embeds quadratic programs in neural networks for end-to-end Sharpe
+training, achieving $0.65{\pm}0.25 \to 1.28{\pm}0.43$ Sharpe lifts.
+\citet{Lin2024MSparse} solve $m$-sparse Sharpe with theoretical guarantees.
+DHRP differs: instead of solving a generic convex problem at each
+forward pass, DHRP imposes a hierarchical inductive bias via soft-gating,
+which empirically wins in low-correlation regimes (commodities, crypto)
+and matches the deeper theory connecting soft routing to optimal
+transport \citep{Cuturi2013Sinkhorn}.
+
+\paragraph{Soft decision trees and hierarchical learning.}
+\citet{FrosstHinton2017} popularized soft decision trees for
+interpretability. \citet{Popov2020NODE} (NODE) demonstrated that
+gradient-trained ensembles of soft trees match XGBoost on tabular data.
+\citet{Hazimeh2020TreeEnsemble} formalized differentiable tree ensembles
+with conditional computation. \citet{NeurIPS2025DiffTree} provide a
+recent NeurIPS spotlight on differentiable decision trees via ReLU+Argmin.
+DHRP adapts these architectures to portfolio allocation, with leaf
+budgets entering an inverse-volatility blend.
+
+\paragraph{Decision-focused learning.}
+\citet{Wilder2019} introduced decision-focused learning for combinatorial
+optimization. \citet{Elmachtoub2022SPO} formalized the smart
+``predict-then-optimize'' framework. Recent finance applications include
+\citet{ParraDiaz2025} for risk budgeting and
+\citet{KimLee2025DFL} for global minimum-variance portfolios. DHRP is
+decision-focused by construction: gradients of the realized portfolio
+return flow through the soft-gating tree to upstream feature extractors.
+
+\paragraph{LLMs in finance.}
+Domain-specific language models such as FinBERT \citep{Huang2023} produce
+embeddings used in sentiment-aware trading
+\citep{Kirtac2025,Wu2023BloombergGPT}. However, recent benchmark papers
+have systematically documented that LLMs do not reliably translate
+text-task competence into financial decision quality:
+StockBench \citep{Wang2025StockBench} shows most LLM agents fail to beat
+buy-and-hold; FinBen \citep{Xie2024FinBen} reports LLM weakness in
+forecasting and risk management; \citet{Tan2024AreLMs} (NeurIPS 2024
+Spotlight) show removing the LLM component improves time-series
+forecasting performance. Our LLM-DHRP ablation
+(Section~\ref{sec:llmablation}) extends this body of evidence to the
+hierarchical portfolio setting.
+
+\paragraph{Multi-seed and Probabilistic Sharpe Ratio reporting.}
+\citet{Bailey2012PSR} introduced PSR for sample-size- and
+moment-corrected Sharpe significance.
+\citet{Bailey2014DSR} extended this to deflate for backtest selection
+bias. Recent ML finance papers report mean$\pm$std over 10--100 seeds
+\citep{ParraDiaz2025,Yang2024BPQP}, and the BetterBench meta-analysis
+\citep{Reuel2024BetterBench} explicitly critiques benchmarks lacking
+multi-seed error bars.
+DHRP-8 adopts these standards.

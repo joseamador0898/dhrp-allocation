@@ -1,0 +1,53 @@
+\section{Introduction}
+\label{sec:intro}
+
+% --- 1 page max ---
+% Story arc:
+%   (a) HRP is widely used but its hard clustering and bisection are non-differentiable
+%   (b) Differentiable optimization layers have unlocked end-to-end systems in other domains
+%   (c) We propose DHRP: a soft-gating tree that generalizes HRP via differentiability
+%   (d) E&D contribution: 8-universe benchmark with multi-seed PSR + factor alphas
+%   (e) Honest negative finding: LLM augmentation fails under rigorous multi-seed evaluation
+
+% TODO: Open with the practitioner motivation
+% Portfolio construction is...
+
+\paragraph{Contributions.} This paper makes three contributions:
+\begin{enumerate}
+  \item \textbf{DHRP architecture (Section~\ref{sec:method}).} A
+    temperature-scaled soft-gating tree that recovers classical HRP as
+    routing temperature $\tau \to 0$ (Proposition~\ref{prop:recovery}),
+    enabling end-to-end gradient flow through hierarchical allocation.
+  \item \textbf{DHRP-8 benchmark (Section~\ref{sec:benchmark}).} An
+    8-universe portfolio evaluation framework (developed markets, emerging
+    markets, commodities, sectors, global multi-asset, factors, crypto,
+    bonds) with eleven methods, multi-seed ($n=10$) reporting,
+    Probabilistic Sharpe Ratios, Fama--French and AQR commodity factor
+    alphas, transaction-cost sensitivity, and Croissant~1.1 metadata for
+    full reproducibility.
+  \item \textbf{Empirical findings (Sections~\ref{sec:results},
+    \ref{sec:llmablation}).} DHRP achieves statistically significant
+    alpha in commodities and crypto with PSR $> 0.99$. Mean-variance
+    dominates equity-heavy universes; no method universally dominates
+    (SPA $p=0.30$). LLM augmentation provides no statistical benefit
+    under multi-seed reporting and regresses in commodities, contrary to
+    single-seed claims in the literature.
+\end{enumerate}
+
+% TODO: Position vs. concurrent work
+% Our work is positioned against...
+%   - BPQP (NeurIPS 2024): differentiable convex optimization, no hierarchical bias
+%   - m-Sparse Sharpe (NeurIPS 2024): sparsity-based, no LLM
+%   - Are LMs Useful for TS (NeurIPS 2024 Spotlight): negative result on LLMs
+%   - StockBench: LLM-trading benchmark, no methodology
+%   - FinBen (D&B 2024): broad financial LLM benchmark, no portfolio focus
+
+% Roadmap paragraph
+The remainder of the paper is organized as follows.
+Section~\ref{sec:related} surveys related work in differentiable
+portfolio optimization, hierarchical methods, and LLM-finance.
+Section~\ref{sec:method} formalizes the DHRP architecture and its loss.
+Section~\ref{sec:benchmark} describes the 8-universe benchmark protocol.
+Section~\ref{sec:results} reports headline results.
+Section~\ref{sec:llmablation} documents the LLM negative ablation.
+Section~\ref{sec:limits} discusses limitations.

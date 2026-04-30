@@ -1,0 +1,98 @@
+\section{Honest Negative Ablation: LLM Augmentation}
+\label{sec:llmablation}
+
+% --- 1 page ---
+
+% Story arc:
+%   (a) Hypothesis: per-asset financial news embeddings should improve
+%       portfolio allocation, especially in commodities where narrative
+%       drives prices
+%   (b) Single-seed runs (early experiments) suggested DM Sharpe lift
+%       0.04 -> 0.27 with text augmentation
+%   (c) Under multi-seed (n=10) reporting, the lift disappears: LLM-DHRP
+%       DM tied with DHRP within noise
+%   (d) Worse, in commodities where we expected the strongest lift,
+%       LLM-DHRP REGRESSES (1.015 -> 0.773, std doubles)
+%   (e) Root cause analysis: per-asset coverage sparsity + BERT anisotropy
+%       + temporal aggregation collapse
+%   (f) This aligns with StockBench, FinBen, and the NeurIPS 2024
+%       Spotlight "Are LMs Useful for TS"
+
+We tested whether augmenting DHRP with FinBERT \citep{Huang2023}
+embeddings of asset-attributed news headlines could improve portfolio
+allocation. Under multi-seed evaluation, the answer is: no.
+
+\paragraph{Setup.} For each of the 8 universes, we trained both DHRP and
+LLM-DHRP across the same 10 seeds. Text features are 90-day rolling
+windows of asset-attributed headlines, FinBERT-encoded, L2-normalized
+per asset, and aggregated as concatenated mean+max
+(Section~\ref{sec:llm_dhrp_arch}). LLM-DHRP uses warm-start training:
+phase~1 freezes the price pathway and only trains text/fusion;
+phase~2 fine-tunes everything with reduced learning rate
+(Appendix~\ref{app:hyperparams}).
+
+\paragraph{Result: no statistical lift, regression in commodities.}
+Table~\ref{tab:llm_ablation} shows the head-to-head:
+
+\begin{table}[h]
+\caption{LLM-DHRP vs.\ DHRP, multi-seed comparison ($n=10$).
+Sharpe~mean$\pm$std; PSR in brackets. $\Delta$ is LLM-DHRP minus DHRP.
+LLM augmentation provides no statistically significant lift in any
+universe, and \emph{regresses} significantly in commodities.}
+\label{tab:llm_ablation}
+\centering
+\small
+\begin{tabular}{lcccc}
+\toprule
+Universe & DHRP Sharpe & LLM-DHRP Sharpe & $\Delta$ Sharpe & $\Delta$ PSR \\
+\midrule
+DM         & $0.105 \pm 0.085$ [.598] & $0.084 \pm 0.064$ [.579] & $-0.021$ & $-0.019$ \\
+EM         & $0.445 \pm 0.006$ [.858] & $0.447 \pm 0.004$ [.859] & $+0.002$ & $+0.001$ \\
+Commodities & $\mathbf{1.015 \pm 0.067}$ [.992] & $0.773 \pm 0.121$ [.961] & $\mathbf{-0.242}$ & $\mathbf{-0.031}$ \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+\paragraph{Why does LLM augmentation fail?}
+We investigated three candidate explanations:
+
+\textbf{(1)~Per-asset headline coverage sparsity.} Despite a 90-day
+rolling window, the average asset has news in only $\sim$40\% of
+windows; the rest fall back to a market-wide embedding. The result is
+that per-asset variation in the text tensor is dominated by missing-
+data fallback rather than asset-specific signal.
+
+\textbf{(2)~BERT anisotropy persistence after temporal aggregation.}
+Per-headline FinBERT embeddings have moderate cosine similarity
+(mean $0.24$, std $0.14$) ---  the model layer is fine. But after
+temporal+L2-normalized $[\text{mean}, \text{max}]$ aggregation,
+per-timestep cosine similarity rises to $0.96$ with std $0.04$,
+indicating the aggregation collapses inter-day variation.
+
+\textbf{(3)~Warm-start training instability.} The cross-modal gate
+amplifies small text signals into large weight swings (mean $L_1$ weight
+diff with vs.\ without text $= 0.61$ in DM). Combined with the high
+seed-to-seed variance (std $0.121$ in commodities, vs.\ $0.067$ for
+DHRP), this suggests the text pathway over-fits in-sample and
+generalizes poorly.
+
+\paragraph{Comparison to literature.}
+This negative result is consistent with concurrent benchmark evidence:
+\citet{Tan2024AreLMs} (NeurIPS 2024 Spotlight) showed that removing the
+LLM component from time-series forecasters improves performance;
+\citet{Wang2025StockBench} demonstrated most LLM-trading agents
+underperform buy-and-hold; \citet{Xie2024FinBen} reported LLMs are
+weak at forecasting. Single-seed claims of LLM-augmentation lifts in
+finance \citep{Kirtac2025} should be interpreted with caution. We
+conjecture that text features may help on tasks where the dominant
+information channel is news (e.g., event-driven trading), but not on
+broad portfolio allocation where covariance structure already captures
+most relevant cross-asset signal.
+
+\paragraph{Implication.} The headline DHRP results
+(Sections~\ref{sec:results_main}--\ref{sec:results_alphas}) stand
+without LLM augmentation. Future work could explore (a) per-asset news
+coverage normalization, (b) sentence-transformer embeddings tuned for
+finance \citep{FinLang2025}, or (c) gated mixture-of-experts routing
+that conditionally activates text only when news velocity exceeds a
+threshold.

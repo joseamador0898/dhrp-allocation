@@ -1,0 +1,117 @@
+\section{The DHRP-8 Benchmark}
+\label{sec:benchmark}
+
+% --- 1.5 pages ---
+
+DHRP-8 evaluates portfolio allocation methods across eight asset
+universes, eleven baselines, and a rigorous statistical battery. This
+section is the E\&D track contribution: a calibrated, multi-seed,
+multi-universe benchmark that the community can build on.
+
+\subsection{Asset universes}
+\label{sec:universes}
+
+% TODO: table 1 - universe summary
+\begin{table}[t]
+\caption{The eight asset universes in DHRP-8. All ETFs are publicly traded
+on US exchanges with 12+ years of daily history (Crypto: post-2020 only).}
+\label{tab:universes}
+\centering
+\small
+\begin{tabular}{lcll}
+\toprule
+Universe & $n$ & Examples & Lookback / Rebalance \\
+\midrule
+DM (developed markets) & 10 & SPY, QQQ, IWM, EFA, TLT, LQD, VNQ, UUP & 252d / 21d \\
+EM (emerging markets)  & 10 & EEM, EWZ, FXI, INDA, EWY, EWT & 252d / 21d \\
+Commodities            & 10 & USO, UNG, GLD, SLV, DBA, DBC, CPER & 63d / 5d \\
+Sectors                & 10 & XLK, XLF, XLV, XLE, XLY, XLP, XLI & 252d / 21d \\
+Global multi-asset     & 10 & SPY, QQQ, EFA, EEM, AGG, TIP, GLD, VNQ & 252d / 21d \\
+Factors                & 10 & MTUM, VLUE, QUAL, USMV, SIZE, VIG     & 252d / 21d \\
+Crypto                 & 10 & GBTC, ETHE, COIN, MSTR, BITO, EETH    & 63d / 5d  \\
+Bonds                  & 10 & TLT, IEF, SHY, LQD, HYG, EMB, MUB     & 252d / 21d \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+We selected universes spanning equity (DM, EM, Sectors, Factors), credit
+(Bonds), commodities, and alternatives (Crypto, Global multi-asset) to
+expose distinct correlation, factor, and regime structures. All price
+data are downloaded from Yahoo Finance v8 API and cached locally;
+volume data and Fama--French \citep{FamaFrench2015} factors are
+obtained via standard public sources. Rebalance frequency and lookback
+windows are tuned per asset class based on regime half-life
+(commodities and crypto: 63-day lookback to capture shorter-cycle
+news-sentiment premium; equities and bonds: 252-day annual cycle).
+
+\subsection{Baselines}
+\label{sec:baselines}
+
+We evaluate eleven methods spanning six classical, three deep, and two
+hierarchical:
+\begin{itemize}
+  \item \textbf{Classical}: Equal-weight (EW), Mean-Variance (MV),
+    Minimum-Variance (MINVAR), Risk Parity (RP), Maximum
+    Diversification (MAXDIV), Hierarchical Risk Parity (HRP).
+  \item \textbf{Deep}: an MLP with covariance-projection head, a
+    Portfolio Transformer \citep{KisielGorse2022}, and a
+    Proximal Policy Optimization agent (PPO).
+  \item \textbf{This paper}: DHRP, LLM-DHRP, and a Decision-Focused
+    Learning baseline (DFL) that mirrors recent ICAIF 2025 work
+    \citep{KimLee2025DFL}.
+\end{itemize}
+All deep methods are trained with identical optimizer, scheduler, and
+seed protocols (Section~\ref{sec:protocol}).
+
+\subsection{Multi-seed protocol}
+\label{sec:protocol}
+
+% TODO: 0.5 page - this is the E&D contribution
+For every neural method (DHRP, LLM-DHRP, MLP, Transformer, PPO, DFL) we
+train independently across $S = 10$ random seeds
+$\{0, 1, \ldots, 9\}$. Each model is backtested over the OOS window
+2020-07-01 to 2026-04-15 with rolling rebalance at the
+universe-specific frequency. Per-method statistics are reported as
+mean$\pm$std across seeds; classical baselines (EW, MV, MINVAR, HRP, RP,
+MAXDIV) are deterministic and reported as a single value. Models are
+trained on the in-sample period 2012--2020-06; OOS evaluation begins
+after a 5-day purge gap to prevent train/test leakage.
+
+\subsection{Statistical battery}
+\label{sec:stats}
+
+DHRP-8 reports five families of significance tests:
+\begin{enumerate}
+  \item \textbf{Probabilistic Sharpe Ratio (PSR)}
+    \citep{Bailey2012PSR}: probability the true Sharpe exceeds zero,
+    sample-corrected for skew/kurtosis. PSR $> 0.95$ implies
+    significance at the 5\% level.
+  \item \textbf{Newey--West HAC} t-statistics on annualized excess
+    returns \citep{NeweyWest1987}.
+  \item \textbf{Factor regression alphas}: Fama--French 3 and 5 factors
+    \citep{FamaFrench2015}, momentum \citep{Carhart1997}, and AQR
+    commodity Value/Momentum factors \citep{AsnessMoskowitzPedersen2013}
+    for the commodity universe.
+  \item \textbf{Pairwise tests vs.\ HRP}: stationary block bootstrap
+    \citep{PolitisRomano1994} on Sharpe differences with
+    Holm--Bonferroni correction \citep{Holm1979}; Diebold--Mariano
+    forecast accuracy \citep{DieboldMariano1995}.
+  \item \textbf{Multi-method tests}: Superior Predictive Ability
+    \citep{Hansen2005} and Model Confidence Set
+    \citep{HansenLundeNason2011} at $\alpha=0.05$.
+\end{enumerate}
+Transaction-cost sensitivity at $\{0, 5, 10, 20, 50\}$ bps and
+sub-period analysis (5 macro regimes) are reported in
+Appendix~\ref{app:additional}.
+
+\subsection{Reproducibility and dataset release}
+\label{sec:repro}
+
+We release the DHRP-8 benchmark with Croissant~1.1 metadata
+\citep{Akhtar2024Croissant} including license, schema, train/test
+splits, and Responsible-AI annotations covering survivorship bias and
+data-leakage warnings (Appendix~\ref{app:croissant}).
+Anonymized GitHub link, frozen pip requirements, and a single-command
+\texttt{reproduce\_all.sh} pipeline are included with the supplementary
+materials. Each individual experiment is also reproducible by setting
+the seed and universe in the configuration file.

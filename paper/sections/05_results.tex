@@ -1,0 +1,100 @@
+\section{Results}
+\label{sec:results}
+
+% --- 2 pages ---
+
+\subsection{Multi-universe Sharpe summary}
+\label{sec:results_main}
+
+% TODO: replace numbers in tabular with values from
+%   results/sharpe_pivot_multiseed_mean.csv and
+%   results/sharpe_pivot_multiseed_std.csv and
+%   results/psr_pivot_multiseed.csv
+% Bold the best method per universe; mark PSR > 0.95 with asterisk.
+
+\begin{table}[t]
+\caption{Mean$\pm$std out-of-sample Sharpe across 10 seeds with
+Probabilistic Sharpe Ratio in brackets. Bold marks the best method per
+universe; * marks $\text{PSR} > 0.95$ (significant at 5\% level).
+Classical baselines (EW, HRP, MV, etc.) are deterministic, reported
+without standard deviation. Full numbers (incl.\ MaxDD, Calmar, factor
+alphas) in Appendix~\ref{app:full_tables}.}
+\label{tab:headline}
+\centering
+\small
+\begin{tabular}{lcccccccc}
+\toprule
+Method & DM & EM & CMD & Sectors & Global & Factors & Crypto & Bonds \\
+\midrule
+EW & 0.25 [.72] & 0.45 [.86] & 0.76 [.97]* & 0.71 [.95]* & 0.55 [.91] & 0.66 [.95]* & 1.07 [.98]* & -1.03 [.01] \\
+HRP & 0.19 [.67] & 0.42 [.84] & 0.88 [.98]* & 0.67 [.95] & 0.23 [.71] & 0.71 [.96]* & 1.02 [.97]* & -1.17 [.00] \\
+MV & \textbf{0.36 [.81]} & \textbf{0.58 [.92]} & 0.64 [.93] & 0.77 [.97]* & \textbf{0.98 [.99]*} & 0.30 [.76] & 1.09 [.98]* & -0.92 [.01] \\
+MINVAR & -0.71 [.04] & 0.25 [.73] & 0.94 [.99]* & 0.42 [.84] & -0.76 [.03] & 0.49 [.88] & 0.60 [.86] & -2.23 [.00] \\
+DHRP    & $0.11{\pm}.09$ [.60] & $0.45{\pm}.01$ [.86] & $\mathbf{1.02{\pm}.07}$ \textbf{[.99]*} & $0.68{\pm}.03$ [.95] & $0.41{\pm}.09$ [.83] & $0.67{\pm}.03$ [.95] & $\mathbf{1.27{\pm}.05}$ \textbf{[.99]*} & $-0.92{\pm}.07$ [.02] \\
+LLM-DHRP & $0.08{\pm}.06$ [.58] & $0.45{\pm}.00$ [.86] & $0.77{\pm}.12$ [.96]* & --- & --- & --- & --- & --- \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+% TODO: prose summary
+% Two stable wins (CMD, Crypto) with PSR > 0.99
+% MV dominates equity-heavy (DM, EM, Global, Sectors) and Bonds
+% LLM-DHRP regresses in CMD (-0.24 Sharpe), tied in DM/EM
+
+\subsection{Factor regression alphas}
+\label{sec:results_alphas}
+
+% TODO: Fama-French 3 / 5 + AQR commodity factors table
+% DHRP CMD: FF3 alpha t=2.49 p=0.013, AQR Val/Mom alpha t=4.00 p<0.001
+% DHRP Crypto: FF3 alpha (no AQR for crypto)
+% LLM-DHRP CMD: FF3 t=2.06 p=0.039 (also significant but weaker than DHRP)
+
+\begin{table}[t]
+\caption{Annualized factor alphas (\%) with HAC t-statistics in
+parentheses, * = $p < 0.05$, ** = $p < 0.01$. Commodity universe uses
+AQR Value/Momentum-Cross-Sectional factors
+\citep{AsnessMoskowitzPedersen2013}; all others use Fama--French 5 + Mom
+\citep{FamaFrench2015,Carhart1997}.}
+\label{tab:alphas}
+\centering
+\small
+% TODO populate
+\begin{tabular}{lcccc}
+\toprule
+& \multicolumn{2}{c}{Commodities} & \multicolumn{2}{c}{Crypto} \\
+\cmidrule(lr){2-3}\cmidrule(lr){4-5}
+Method & FF3 $\alpha$ & AQR $\alpha$ & FF3 $\alpha$ & FF5+Mom $\alpha$ \\
+\midrule
+EW    & 8.6\% (1.39)  & 12.4\% (1.94) & TBD & TBD \\
+HRP   & 11.3\% (2.03)* & 15.0\% (2.54)* & TBD & TBD \\
+MV    & 10.0\% (0.54) & 0.99\% (0.06) & TBD & TBD \\
+DHRP  & \textbf{16.1\% (2.49)*} & \textbf{20.7\% (4.00)**} & TBD & TBD \\
+LLM-DHRP & 13.1\% (2.06)* & 13.7\% (2.31)* & --- & --- \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+% TODO prose summary
+
+\subsection{Multi-method tests: SPA and MCS}
+\label{sec:results_mcs}
+
+% TODO: report SPA p-value (~0.30) and MCS members
+% Frame: SPA does NOT reject "no method better than EW" at 5% --> supports
+% the "no universal best" thesis. MCS includes most methods --> consistent
+% with multi-seed variance.
+
+\subsection{Transaction-cost sensitivity}
+\label{sec:results_costs}
+
+% TODO: Sharpe at 0/5/10/20/50 bps + breakeven cost vs EW
+% DHRP commodities holds Sharpe > 0.9 at 10 bps; degrades to 0.5 at 50 bps.
+% TBD figure: cost sensitivity curves
+
+\subsection{Ablations}
+\label{sec:results_ablations}
+
+% TODO: Cell 16 results - tree depth, loss components, text fusion
+% Tree depth = 2/3/4 sweep
+% Loss components: HRP-reg / Sharpe / CRRA on/off
+% Text fusion: full / no-text / additive / cross-attention
