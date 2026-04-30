@@ -1,0 +1,95 @@
+% =====================================================================
+% NeurIPS 2026 Paper Checklist (Mandatory)
+%
+% Answer each question with one of: [Yes], [No], [N/A], or a short
+% justification. The checklist does NOT count toward the 9-page limit.
+%
+% Reference: https://neurips.cc/public/guides/PaperChecklist
+%
+% IMPORTANT: re-verify every answer against the final paper text and
+% supplementary materials before submission. This file is a draft.
+% =====================================================================
+
+\section*{NeurIPS Paper Checklist}
+
+\begin{enumerate}
+\item {\bf Claims}\\
+\textbf{Question:} Do the main claims made in the abstract and introduction accurately reflect the paper's contributions and scope?\\
+\textbf{Answer:} \answerYes{}\\
+\textbf{Justification:} The abstract and Section~\ref{sec:intro} claim three contributions: (i) DHRP architecture with HRP recovery (Proposition~\ref{prop:recovery}), (ii) the 8-universe DHRP-8 benchmark with multi-seed PSR reporting, and (iii) honest negative LLM ablation. Each contribution is delivered in Sections~\ref{sec:method}, \ref{sec:benchmark}, and \ref{sec:llmablation} respectively.
+
+\item {\bf Limitations}\\
+\textbf{Question:} Does the paper discuss the limitations of the work performed by the authors?\\
+\textbf{Answer:} \answerYes{}\\
+\textbf{Justification:} Section~\ref{sec:limits} explicitly addresses (a) when DHRP wins vs.\ loses (commodities/crypto vs.\ equity-heavy universes), (b) failed hypotheses (LLM augmentation, deeper trees), (c) threats to validity (survivorship bias, backtest overfitting, single-period OOS), and (d) future work directions.
+
+\item {\bf Theory assumptions and proofs}\\
+\textbf{Question:} For each theoretical result, does the paper provide the full set of assumptions and a complete (and correct) proof?\\
+\textbf{Answer:} \answerYes{}\\
+\textbf{Justification:} Proposition~\ref{prop:recovery} (HRP recovery) is stated with explicit assumptions (unique HRP tree from agglomerative clustering) in Section~\ref{sec:dhrp_layer}, with a proof sketch in the section and the full proof in Appendix~\ref{app:proof}.
+
+\item {\bf Experimental result reproducibility}\\
+\textbf{Question:} Does the paper fully disclose all the information needed to reproduce the main experimental results of the paper to the extent that it affects the main claims and/or conclusions of the paper (regardless of whether the code and data are provided or not)?\\
+\textbf{Answer:} \answerYes{}\\
+\textbf{Justification:} Section~\ref{sec:protocol} describes the multi-seed protocol; Appendix~\ref{app:hyperparams} provides per-universe hyperparameters; Appendix~\ref{app:repro_notes} provides the compute budget. The data sources (Section~\ref{sec:universes}) are public. \texttt{REPRODUCIBILITY.md} in the supplementary materials contains a single-command \texttt{reproduce\_all.sh} script.
+
+\item {\bf Open access to data and code}\\
+\textbf{Question:} Does the paper provide open access to the data and code, with sufficient instructions to faithfully reproduce the main experimental results, as described in supplemental material?\\
+\textbf{Answer:} \answerYes{}\\
+\textbf{Justification:} Anonymous release at \url{https://anonymous.4open.science/r/DHRP-8-anonymized}. Includes pinned \texttt{requirements-frozen.txt}, single-command reproduction (\texttt{scripts/reproduce\_all.sh}), Croissant 1.1 metadata for the 8-universe benchmark (\texttt{data/croissant/dhrp-8universe.json}), and trained model checkpoints across 10 seeds.
+
+\item {\bf Experimental setting/details}\\
+\textbf{Question:} Does the paper specify all the training and test details (e.g., data splits, hyperparameters, how they were chosen, type of optimizer, etc.) necessary to understand the results?\\
+\textbf{Answer:} \answerYes{}\\
+\textbf{Justification:} Sections~\ref{sec:method}--\ref{sec:protocol} and Appendix~\ref{app:hyperparams} cover model architecture, multi-objective loss, AdamW optimizer with cosine annealing, learning rate $6 \times 10^{-4}$, weight decay, gradient clipping, batch size, and 10-seed protocol. Train/test splits are fixed by date (in-sample 2012--2020-06; OOS 2020-07--2026-04).
+
+\item {\bf Experiment statistical significance}\\
+\textbf{Question:} Does the paper report error bars suitably and correctly defined or other appropriate information about the statistical significance of the experiments?\\
+\textbf{Answer:} \answerYes{}\\
+\textbf{Justification:} All neural methods report mean$\pm$std over 10 random seeds. Significance is reported through (i) Probabilistic Sharpe Ratios \citep{Bailey2012PSR}, (ii) HAC Newey--West t-statistics \citep{NeweyWest1987}, (iii) Fama--French and AQR factor regression alphas, (iv) pairwise Sharpe-difference tests via stationary block bootstrap \citep{PolitisRomano1994} with Holm--Bonferroni correction, and (v) SPA \citep{Hansen2005} and MCS \citep{HansenLundeNason2011} multi-method tests.
+
+\item {\bf Experiments compute resources}\\
+\textbf{Question:} For each experiment, does the paper provide sufficient information on the computer resources (type of compute workers, memory, time of execution) needed to reproduce the experiments?\\
+\textbf{Answer:} \answerYes{}\\
+\textbf{Justification:} Appendix~\ref{app:repro_notes} reports total compute: $\sim 7$ GPU-hours on NVIDIA T4 (Google Colab) or $\sim 1.8$ GPU-hours on A100 for the full 10-seed multi-universe pipeline. Per-step breakdown is included.
+
+\item {\bf Code of ethics}\\
+\textbf{Question:} Does the research conducted in the paper conform, in every respect, with the NeurIPS Code of Ethics?\\
+\textbf{Answer:} \answerYes{}\\
+\textbf{Justification:} The work uses public market data, public news headlines under fair-use research exemption, and a publicly available pre-trained LLM (FinBERT, ProsusAI). No human subjects, no PII. The Croissant metadata documents survivorship bias and other dataset caveats per the NeurIPS RAI guidelines.
+
+\item {\bf Broader impacts}\\
+\textbf{Question:} Does the paper discuss both potential positive societal impacts and negative societal impacts of the work performed?\\
+\textbf{Answer:} \answerYes{}\\
+\textbf{Justification:} Section~\ref{sec:limits} discusses limitations (DHRP underperforms in equity-heavy universes; LLM augmentation does not help). Broader impacts are addressed in the Croissant RAI metadata (Appendix~\ref{app:croissant}): (positive) standardized benchmark for portfolio research; (negative caveat) financial models can affect trading decisions, and survivorship bias in static ETF universes may overstate historical performance for delisted assets.
+
+\item {\bf Safeguards}\\
+\textbf{Question:} Does the paper describe safeguards that have been put in place for responsible release of data or models with a high risk for misuse (e.g., pretrained language models, image generators, or scraped datasets)?\\
+\textbf{Answer:} \answerNA{}\\
+\textbf{Justification:} The released artifacts are public market price data, public news headlines, and trained portfolio allocation models on small ETF universes. None pose high risk for misuse beyond standard disclaimers about not using historical backtests as live trading advice.
+
+\item {\bf Licenses for existing assets}\\
+\textbf{Question:} Are the creators or original owners of assets (e.g., code, data, models), used in the paper, properly credited and are the license and terms of use explicitly mentioned and properly respected?\\
+\textbf{Answer:} \answerYes{}\\
+\textbf{Justification:} ETF prices via Yahoo Finance v8 API (public). Fama--French factors via Kenneth French's data library (public). AQR commodity factors via AQR Capital Management's research portal (public). FinBERT model: ProsusAI/finbert on HuggingFace (CC-BY-NC-4.0). All credited in Section~\ref{sec:universes} and Appendix~\ref{app:croissant}.
+
+\item {\bf New assets}\\
+\textbf{Question:} Are new assets introduced in the paper well documented and is the documentation provided alongside the assets?\\
+\textbf{Answer:} \answerYes{}\\
+\textbf{Justification:} The DHRP-8 benchmark dataset is documented via Croissant 1.1 metadata (\texttt{data/croissant/dhrp-8universe.json}, summarized in Appendix~\ref{app:croissant}) including license, schema, distribution files, train/test splits, and Responsible-AI annotations. Code is documented via \texttt{REPRODUCIBILITY.md} and inline docstrings.
+
+\item {\bf Crowdsourcing and research with human subjects}\\
+\textbf{Question:} For crowdsourcing experiments and research with human subjects, does the paper include the full text of instructions given to participants and screenshots, if applicable, as well as details about compensation (if any)?\\
+\textbf{Answer:} \answerNA{}\\
+\textbf{Justification:} No human subjects or crowdsourcing.
+
+\item {\bf Institutional review board (IRB) approvals or equivalent for research with human subjects}\\
+\textbf{Question:} Does the paper describe potential risks incurred by study participants, whether such risks were disclosed to the subjects, and whether Institutional Review Board (IRB) approvals (or an equivalent approval/review based on the requirements of your country or institution) were obtained?\\
+\textbf{Answer:} \answerNA{}\\
+\textbf{Justification:} No human subjects.
+
+\item {\bf Declaration of LLM usage}\\
+\textbf{Question:} Does the paper describe the usage of LLMs if it is an important, original, or non-standard component of the core methods in this research?\\
+\textbf{Answer:} \answerYes{}\\
+\textbf{Justification:} The paper studies LLM augmentation (LLM-DHRP) as a methodological component. Section~\ref{sec:llm_dhrp_arch} describes the architecture, including FinBERT \citep{Huang2023} as the embedding model, the cross-modal fusion mechanism, and the warm-start training protocol. Section~\ref{sec:llmablation} reports the negative result that LLM augmentation does not improve over the price-only DHRP under multi-seed reporting.
+\end{enumerate}
