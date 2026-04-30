@@ -14,6 +14,51 @@ def compute_sharpe(r, rf=0.03):
     return (exc.mean() * 252) / (exc.std() * np.sqrt(252)) if exc.std() > 0 else 0
 
 
+def probabilistic_sharpe_ratio(r, sr_threshold=0.0, rf=0.03):
+    """Probabilistic Sharpe Ratio (Bailey & López de Prado 2012, Two Sigma 2017).
+
+    Probability that the true Sharpe ratio exceeds `sr_threshold`, accounting for
+    sample size, skewness, and kurtosis. PSR > 0.95 means significantly positive
+    Sharpe at 95% confidence — gold-standard significance test in quant finance
+    and increasingly required by NeurIPS/ICLR finance reviewers.
+
+    Args:
+        r: array of daily returns (not annualized)
+        sr_threshold: annualized Sharpe ratio benchmark (default 0)
+        rf: annualized risk-free rate (default 3%)
+    Returns:
+        PSR in [0, 1] (higher = more confident the true Sharpe exceeds threshold)
+    """
+    n = len(r)
+    if n < 30:
+        return np.nan
+
+    exc = r - rf / 252
+    if exc.std() <= 0:
+        return np.nan
+
+    # Daily Sharpe (not annualized) for the PSR formula
+    sr_hat_daily = exc.mean() / exc.std()
+
+    # Daily threshold (convert annualized SR threshold)
+    sr_thresh_daily = sr_threshold / np.sqrt(252)
+
+    # Higher moments of excess returns (centered)
+    centered = exc - exc.mean()
+    sigma = exc.std()
+    skew = (centered ** 3).mean() / (sigma ** 3) if sigma > 0 else 0.0
+    kurt = (centered ** 4).mean() / (sigma ** 4) if sigma > 0 else 3.0  # raw kurtosis
+
+    # Standard error of Sharpe (Mertens 2002 / Bailey-LdP correction)
+    denom = 1 - skew * sr_hat_daily + ((kurt - 1) / 4) * (sr_hat_daily ** 2)
+    if denom <= 0:
+        return np.nan
+    se = np.sqrt(denom / (n - 1))
+
+    z = (sr_hat_daily - sr_thresh_daily) / se
+    return float(norm.cdf(z))
+
+
 def compute_stats(results, rf=0.03, n_boot=1000, gamma=2.5, oos_start=None):
     """Compute comprehensive performance metrics for each method.
 
@@ -104,12 +149,16 @@ def compute_stats(results, rf=0.03, n_boot=1000, gamma=2.5, oos_start=None):
         except Exception:
             cer_ann = np.nan
 
+        # Probabilistic Sharpe Ratio (gold-standard finance significance test)
+        psr = probabilistic_sharpe_ratio(r, sr_threshold=0.0, rf=rf)
+
         stats.append({
             "Method": m, "Sharpe": sharpe, "Sortino": sortino,
             "Calmar": calmar, "MaxDD": mdd,
             "CVaR_5": cvar_5, "VaR_5": var_5, "Omega": omega,
             "CER": cer_ann, "Ann_Return": ann_ret, "Ann_Vol": ann_vol,
             "HAC_t": hac_t, "CI_lo": ci_lo, "CI_hi": ci_hi,
+            "PSR": psr,
         })
     return pd.DataFrame(stats)
 
