@@ -18,7 +18,7 @@ All retain HRP's non-differentiable clustering core.
 \citet{Agrawal2019} generalized via CVXPY layers, computing gradients
 through KKT conditions of arbitrary convex programs.
 \citet{Bolte2021} extended the theory to nonsmooth implicit
-differentiation. In portfolio optimization, BPQP \citep{Yang2024BPQP}
+differentiation. In portfolio optimization, BPQP \citep{Pan2024BPQP}
 embeds quadratic programs in neural networks for end-to-end Sharpe
 training, achieving $0.65{\pm}0.25 \to 1.28{\pm}0.43$ Sharpe lifts.
 \citet{Lin2024MSparse} solve $m$-sparse Sharpe with theoretical guarantees.
@@ -33,7 +33,7 @@ transport \citep{Cuturi2013Sinkhorn}.
 interpretability. \citet{Popov2020NODE} (NODE) demonstrated that
 gradient-trained ensembles of soft trees match XGBoost on tabular data.
 \citet{Hazimeh2020TreeEnsemble} formalized differentiable tree ensembles
-with conditional computation. \citet{NeurIPS2025DiffTree} provide a
+with conditional computation. \citet{Mao2025DiffTree} provide a
 recent NeurIPS spotlight on differentiable decision trees via ReLU+Argmin.
 DHRP adapts these architectures to portfolio allocation, with leaf
 budgets entering an inverse-volatility blend.
@@ -53,7 +53,7 @@ embeddings used in sentiment-aware trading
 \citep{Kirtac2025,Wu2023BloombergGPT}. However, recent benchmark papers
 have systematically documented that LLMs do not reliably translate
 text-task competence into financial decision quality:
-StockBench \citep{Wang2025StockBench} shows most LLM agents fail to beat
+StockBench \citep{Chen2025StockBench} shows most LLM agents fail to beat
 buy-and-hold; FinBen \citep{Xie2024FinBen} reports LLM weakness in
 forecasting and risk management; \citet{Tan2024AreLMs} (NeurIPS 2024
 Spotlight) show removing the LLM component improves time-series
@@ -66,7 +66,7 @@ hierarchical portfolio setting.
 moment-corrected Sharpe significance.
 \citet{Bailey2014DSR} extended this to deflate for backtest selection
 bias. Recent ML finance papers report mean$\pm$std over 10--100 seeds
-\citep{ParraDiaz2025,Yang2024BPQP}, and the BetterBench meta-analysis
+\citep{ParraDiaz2025,Pan2024BPQP}, and the BetterBench meta-analysis
 \citep{Reuel2024BetterBench} explicitly critiques benchmarks lacking
 multi-seed error bars.
 DHRP-8 adopts these standards.
