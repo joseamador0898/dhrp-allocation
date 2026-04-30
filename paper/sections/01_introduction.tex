@@ -9,8 +9,44 @@
 %   (d) E&D contribution: 8-universe benchmark with multi-seed PSR + factor alphas
 %   (e) Honest negative finding: LLM augmentation fails under rigorous multi-seed evaluation
 
-% TODO: Open with the practitioner motivation
-% Portfolio construction is...
+Portfolio optimization sits at the intersection of statistical estimation
+and constrained decision-making. The classical mean-variance framework of
+\citet{Markowitz1952} provides an elegant theoretical solution but is
+notoriously sensitive to estimated inputs: small errors in expected
+returns or covariances are amplified by the optimization, leading to
+unstable allocations that perform poorly out of sample
+\citep{DeMiguel2009,Ledoit2004}. Hierarchical Risk Parity (HRP),
+introduced by \citet{LopezdePrado2016}, sidesteps this fragility by
+working with covariance information alone and routing capital down a
+binary tree built from agglomerative clustering of asset correlation
+distances. HRP produces stable, diversified portfolios and has become a
+practitioner standard, with subsequent work exploring linkage variants
+\citep{Raffinot2018} and risk-budgeting extensions \citep{Roncalli2013}.
+
+From a machine-learning perspective, HRP has a critical limitation: its
+clustering and recursive bisection steps are non-differentiable, so it
+cannot be jointly trained with upstream feature extractors. Recent
+advances in differentiable optimization layers
+\citep{Amos2017,Agrawal2019,Bolte2021,Pan2024BPQP} have shown that
+embedding structured decision-making within neural networks unlocks
+end-to-end systems that outperform two-stage ``predict then optimize''
+pipelines \citep{Donti2017,Wilder2019,Elmachtoub2022SPO}. Concurrently,
+soft decision trees \citep{FrosstHinton2017,Popov2020NODE,Mao2025DiffTree}
+and gated mixture-of-experts \citep{Shazeer2017} have demonstrated that
+hierarchical routing can be made differentiable while retaining the
+inductive bias that makes trees interpretable.
+
+This paper makes both architectures available to portfolio allocation.
+We replace HRP's clustering and bisection with a temperature-scaled
+soft-gating tree that recovers classical HRP as routing temperature
+$\tau \to 0$, and we evaluate the resulting layer (DHRP) against ten
+strong baselines across eight asset universes with rigorous multi-seed
+reporting (10 seeds, mean$\pm$std + Probabilistic Sharpe Ratios).
+We further test whether augmenting DHRP with FinBERT \citep{Huang2023}
+embeddings of asset-attributed financial news helps---and find,
+honestly, that it does not, joining a growing benchmark literature
+\citep{Tan2024AreLMs,Chen2025StockBench,Xie2024FinBen} cautioning
+against single-seed claims of LLM benefit in finance.
 
 \paragraph{Contributions.} This paper makes three contributions:
 \begin{enumerate}
@@ -33,14 +69,6 @@
     under multi-seed reporting and regresses in commodities, contrary to
     single-seed claims in the literature.
 \end{enumerate}
-
-% TODO: Position vs. concurrent work
-% Our work is positioned against...
-%   - BPQP (NeurIPS 2024): differentiable convex optimization, no hierarchical bias
-%   - m-Sparse Sharpe (NeurIPS 2024): sparsity-based, no LLM
-%   - Are LMs Useful for TS (NeurIPS 2024 Spotlight): negative result on LLMs
-%   - StockBench: LLM-trading benchmark, no methodology
-%   - FinBen (D&B 2024): broad financial LLM benchmark, no portfolio focus
 
 % Roadmap paragraph
 The remainder of the paper is organized as follows.

@@ -6,9 +6,20 @@
 \subsection{Classical HRP recap}
 \label{sec:hrp_recap}
 
-% TODO: 0.25 page - state classical HRP in 5 lines
-% Distance D_ij = sqrt(0.5 * (1 - rho_ij)), single-linkage clustering,
-% quasi-diagonalization, recursive bisection with inverse-volatility weights.
+Hierarchical Risk Parity \citep{LopezdePrado2016} operates in three stages.
+Given an annualized covariance $\Sigma \in \mathbb{R}^{n \times n}$, it
+(i) computes a correlation distance
+$D_{ij} = \sqrt{(1 - \rho_{ij})/2}$ where
+$\rho_{ij} = \Sigma_{ij}/\sqrt{\Sigma_{ii}\Sigma_{jj}}$,
+(ii) builds a binary tree by single-linkage agglomerative clustering on $D$,
+and (iii) recursively bisects the tree, allocating capital between the two
+sub-trees in inverse proportion to their cluster volatilities.
+Each step is non-differentiable: the agglomerative clustering produces a
+combinatorial tree, and the recursive bisection involves a hard
+volatility-weighted split. Consequently HRP cannot be jointly trained
+with upstream feature extractors, regardless of the loss function on top.
+DHRP replaces both stages with smooth parameterized counterparts that
+preserve the hierarchical inductive bias.
 
 \subsection{DHRP: a differentiable soft-gating tree}
 \label{sec:dhrp_layer}
