@@ -27,30 +27,7 @@
 \section{Hyperparameters}
 \label{app:hyperparams}
 
-% TODO: per-universe hyperparameter table from src/data/universe_config.py
-
-\begin{table}[h]
-\caption{Per-universe hyperparameters used in DHRP-8. Tree depth, lookback
-window, rebalance frequency, covariance shrinkage, and HRP regularization
-schedule are tuned per asset class.}
-\label{tab:hyperparams}
-\centering
-\small
-\begin{tabular}{lcccccc}
-\toprule
-Universe & Lookback & Rebalance & Tree depth & Cov shrinkage & HRP $\lambda_{\text{start}\to\text{end}}$ & Text gate bias \\
-\midrule
-DM           & 252 & 21 & 2 & $10^{-6}$ & $0.30 \to 0.05$ & $-1.0$ \\
-EM           & 252 & 21 & 2 & $10^{-3}$ & $0.30 \to 0.05$ & $-1.0$ \\
-Commodities  & 63  & 5  & 2 & $10^{-2}$ & $0.50 \to 0.10$ & $-0.5$ \\
-Sectors      & 252 & 21 & 2 & $10^{-6}$ & $0.30 \to 0.05$ & $-1.0$ \\
-Global       & 252 & 21 & 3 & $10^{-5}$ & $0.30 \to 0.05$ & $-1.0$ \\
-Factors      & 252 & 21 & 3 & $10^{-5}$ & $0.30 \to 0.05$ & --- \\
-Crypto       & 63  & 5  & 2 & $2{\cdot}10^{-2}$ & $0.30 \to 0.05$ & $-0.5$ \\
-Bonds        & 252 & 21 & 2 & $10^{-5}$ & $0.30 \to 0.05$ & --- \\
-\bottomrule
-\end{tabular}
-\end{table}
+\input{tables/hyperparams}
 
 \paragraph{Training protocol.} 60 epochs (DM/CMD), 50 epochs (EM); cosine
 annealing learning rate $6 \cdot 10^{-4}$ peak, $3 \cdot 10^{-5}$ floor.

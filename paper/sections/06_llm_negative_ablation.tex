@@ -34,24 +34,7 @@ phase~2 fine-tunes everything with reduced learning rate
 \paragraph{Result: no statistical lift, regression in commodities.}
 Table~\ref{tab:llm_ablation} shows the head-to-head:
 
-\begin{table}[h]
-\caption{LLM-DHRP vs.\ DHRP, multi-seed comparison ($n=10$).
-Sharpe~mean$\pm$std; PSR in brackets. $\Delta$ is LLM-DHRP minus DHRP.
-LLM augmentation provides no statistically significant lift in any
-universe, and \emph{regresses} significantly in commodities.}
-\label{tab:llm_ablation}
-\centering
-\small
-\begin{tabular}{lcccc}
-\toprule
-Universe & DHRP Sharpe & LLM-DHRP Sharpe & $\Delta$ Sharpe & $\Delta$ PSR \\
-\midrule
-DM         & $0.446 \pm 0.056$ [.856] & $0.239 \pm 0.119$ [.712] & $-0.207$ & $-0.144$ \\
-EM         & $0.469 \pm 0.004$ [.870] & $0.474 \pm 0.005$ [.872] & $+0.005$ & $+0.002$ \\
-Commodities & $\mathbf{1.304 \pm 0.095}$ [.999] & $0.738 \pm 0.104$ [.956] & $\mathbf{-0.566}$ & $\mathbf{-0.043}$ \\
-\bottomrule
-\end{tabular}
-\end{table}
+\input{tables/llm_ablation}
 
 \paragraph{Why does LLM augmentation fail?}
 We investigated three candidate explanations:

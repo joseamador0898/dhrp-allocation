@@ -26,14 +26,9 @@ preserve the hierarchical inductive bias.
 
 DHRP maps a feature vector $x_t \in \mathbb{R}^f$ and an annualized
 covariance matrix $\Sigma_t \in \mathbb{R}^{n \times n}$ to portfolio
-weights $w_t \in \Delta^{n-1}$ via four learnable components:
-% TODO: figure 1 - architecture diagram
-% \begin{figure}[t]
-%   \centering
-%   \includegraphics[width=0.95\textwidth]{architecture.pdf}
-%   \caption{DHRP and LLM-DHRP architectures.}
-%   \label{fig:arch}
-% \end{figure}
+weights $w_t \in \Delta^{n-1}$ via four learnable components
+(Figure~\ref{fig:arch}):
+\input{figures/architecture}
 
 \paragraph{Feature fusion.}
 A cov-projection MLP $f_{\text{cov}}: \mathbb{R}^{n^2} \to \mathbb{R}^f$
