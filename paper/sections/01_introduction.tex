@@ -1,81 +1,51 @@
 \section{Introduction}
 \label{sec:intro}
 
-% --- 1 page max ---
-% Story arc:
-%   (a) HRP is widely used but its hard clustering and bisection are non-differentiable
-%   (b) Differentiable optimization layers have unlocked end-to-end systems in other domains
-%   (c) We propose DHRP: a soft-gating tree that generalizes HRP via differentiability
-%   (d) E&D contribution: 8-universe benchmark with multi-seed PSR + factor alphas
-%   (e) Honest negative finding: LLM augmentation fails under rigorous multi-seed evaluation
-
 Portfolio optimization sits at the intersection of statistical estimation
-and constrained decision-making. The classical mean-variance framework of
-\citet{Markowitz1952} provides an elegant theoretical solution but is
-notoriously sensitive to estimated inputs: small errors in expected
-returns or covariances are amplified by the optimization, leading to
-unstable allocations that perform poorly out of sample
-\citep{DeMiguel2009,Ledoit2004}. Hierarchical Risk Parity (HRP),
-introduced by \citet{LopezdePrado2016}, sidesteps this fragility by
-working with covariance information alone and routing capital down a
-binary tree built from agglomerative clustering of asset correlation
-distances. HRP produces stable, diversified portfolios and has become a
-practitioner standard, with subsequent work exploring linkage variants
-\citep{Raffinot2018} and risk-budgeting extensions \citep{Roncalli2013}.
+and constrained decision-making. Mean--variance optimization
+\citep{Markowitz1952} is fragile to estimation error
+\citep{DeMiguel2009,Ledoit2004}; Hierarchical Risk Parity (HRP)
+\citep{LopezdePrado2016} sidesteps this by routing capital down a binary
+tree built from agglomerative clustering of correlation distances. HRP
+has become a practitioner standard, but its hard clustering and
+recursive bisection are non-differentiable, blocking joint training
+with upstream feature extractors. Differentiable optimization layers
+\citep{Amos2017,Agrawal2019,Bolte2021,Pan2024BPQP}, soft decision trees
+\citep{FrosstHinton2017,Popov2020NODE,Mao2025DiffTree}, and gated
+mixture-of-experts \citep{Shazeer2017} have shown that hierarchical
+routing can be made differentiable while retaining the inductive bias
+that makes trees interpretable.
 
-From a machine-learning perspective, HRP has a critical limitation: its
-clustering and recursive bisection steps are non-differentiable, so it
-cannot be jointly trained with upstream feature extractors. Recent
-advances in differentiable optimization layers
-\citep{Amos2017,Agrawal2019,Bolte2021,Pan2024BPQP} have shown that
-embedding structured decision-making within neural networks unlocks
-end-to-end systems that outperform two-stage ``predict then optimize''
-pipelines \citep{Donti2017,Wilder2019,Elmachtoub2022SPO}. Concurrently,
-soft decision trees \citep{FrosstHinton2017,Popov2020NODE,Mao2025DiffTree}
-and gated mixture-of-experts \citep{Shazeer2017} have demonstrated that
-hierarchical routing can be made differentiable while retaining the
-inductive bias that makes trees interpretable.
-
-This paper makes both architectures available to portfolio allocation.
-We replace HRP's clustering and bisection with a temperature-scaled
+We bring these architectures to portfolio allocation. \textbf{DHRP}
+replaces HRP's clustering and bisection with a temperature-scaled
 soft-gating tree that recovers classical HRP as routing temperature
-$\tau \to 0$, and we evaluate the resulting layer (DHRP) against ten
-strong baselines across eight asset universes with rigorous multi-seed
-reporting (10 seeds, mean$\pm$std + Probabilistic Sharpe Ratios).
-We further test whether augmenting DHRP with FinBERT \citep{Huang2023}
-embeddings of asset-attributed financial news helps---and find,
-honestly, that it does not, joining a growing benchmark literature
-\citep{Tan2024AreLMs,Chen2025StockBench,Xie2024FinBen} cautioning
+$\tau \to 0$ (Proposition~\ref{prop:recovery}), enabling end-to-end
+gradient training. We evaluate it against ten baselines across
+\textbf{eight asset universes} with multi-seed reporting (10 seeds,
+mean$\pm$std, Probabilistic Sharpe Ratios) and Fama--French + AQR
+factor alphas. We also test cross-modal LLM augmentation (LLM-DHRP)
+fusing FinBERT \citep{Huang2023} embeddings of asset-attributed news,
+and find that text augmentation provides \emph{no statistical lift}
+under multi-seed reporting---joining a growing benchmark literature
+\citep{Tan2024AreLMs,Chen2025StockBench,Xie2024FinBen} that cautions
 against single-seed claims of LLM benefit in finance.
 
-\paragraph{Contributions.} This paper makes three contributions:
-\begin{enumerate}
-  \item \textbf{DHRP architecture (Section~\ref{sec:method}).} A
-    temperature-scaled soft-gating tree that recovers classical HRP as
-    routing temperature $\tau \to 0$ (Proposition~\ref{prop:recovery}),
-    enabling end-to-end gradient flow through hierarchical allocation.
-  \item \textbf{DHRP-8 benchmark (Section~\ref{sec:benchmark}).} An
-    8-universe portfolio evaluation framework (developed markets, emerging
-    markets, commodities, sectors, global multi-asset, factors, crypto,
-    bonds) with eleven methods, multi-seed ($n=10$) reporting,
-    Probabilistic Sharpe Ratios, Fama--French and AQR commodity factor
-    alphas, transaction-cost sensitivity, and Croissant~1.1 metadata for
-    full reproducibility.
-  \item \textbf{Empirical findings (Sections~\ref{sec:results},
-    \ref{sec:llmablation}).} DHRP achieves statistically significant
-    alpha in commodities and crypto with PSR $> 0.99$. Mean-variance
-    dominates equity-heavy universes; no method universally dominates
-    (SPA $p=0.30$). LLM augmentation provides no statistical benefit
-    under multi-seed reporting and regresses in commodities, contrary to
-    single-seed claims in the literature.
+\paragraph{Contributions.}
+\begin{enumerate}\itemsep0.05em
+\item \textbf{DHRP architecture (Section~\ref{sec:method}):} a
+  temperature-scaled soft-gating tree with HRP recovery in the
+  $\tau \to 0$ limit (Proposition~\ref{prop:recovery}, proof in
+  Appendix~\ref{app:proof}).
+\item \textbf{DHRP-8 benchmark (Section~\ref{sec:benchmark}):} an
+  8-universe portfolio evaluation framework (DM, EM, commodities,
+  sectors, global multi-asset, factors, crypto, bonds) with eleven
+  methods, 10-seed reporting, PSR, FF3+AQR factor alphas,
+  transaction-cost sensitivity, and Croissant~1.1 metadata.
+\item \textbf{Empirical findings (Sections~\ref{sec:results},
+  \ref{sec:llmablation}):} DHRP achieves PSR $> 0.99$ on commodities
+  ($1.30 \pm 0.10$ Sharpe) and crypto ($1.29 \pm 0.05$), beats
+  classical HRP in 7/8 universes, and ties or beats all classical
+  baselines in DM. Mean-variance dominates equity-heavy global
+  multi-asset. LLM augmentation regresses ($-0.21$ Sharpe in DM,
+  $-0.57$ in commodities) under multi-seed reporting.
 \end{enumerate}
-
-% Roadmap paragraph
-The remainder of the paper is organized as follows.
-Section~\ref{sec:related} surveys related work in differentiable
-portfolio optimization, hierarchical methods, and LLM-finance.
-Section~\ref{sec:method} formalizes the DHRP architecture and its loss.
-Section~\ref{sec:benchmark} describes the 8-universe benchmark protocol.
-Section~\ref{sec:results} reports headline results.
-Section~\ref{sec:llmablation} documents the LLM negative ablation.
-Section~\ref{sec:limits} discusses limitations.
