@@ -235,6 +235,81 @@ def main() -> int:
     else:
         print(f"  {green('OK')} No de-anonymizing strings detected")
 
+    # 9. PDF build checks (only if main.pdf exists)
+    print("\n[9] PDF build artifacts (skip if PDF not built yet)...")
+    pdf = PAPER / "main.pdf"
+    if not pdf.exists():
+        warnings.append("paper/main.pdf not built yet — run pdflatex before submission")
+        print(f"  {yellow('WARN')} paper/main.pdf not found (build with pdflatex)")
+    else:
+        # 9a. PDF page count
+        try:
+            import subprocess
+            r = subprocess.run(["pdfinfo", str(pdf)], capture_output=True, text=True)
+            for line in r.stdout.split("\n"):
+                if line.startswith("Pages:"):
+                    n_pages = int(line.split(":", 1)[1].strip())
+                    print(f"  PDF total pages: {n_pages}")
+                    if n_pages > 25:
+                        warnings.append(f"PDF has {n_pages} pages — verify <= 9 main + refs/appendix limit")
+                    break
+        except FileNotFoundError:
+            print(f"  {yellow('WARN')} pdfinfo not installed — skipping page count check")
+        # 9b. PDF font types
+        try:
+            import subprocess
+            r = subprocess.run(["pdffonts", str(pdf)], capture_output=True, text=True)
+            type3_lines = [l for l in r.stdout.split("\n") if "Type 3" in l or "type 3" in l]
+            if type3_lines:
+                errors.append(f"PDF contains {len(type3_lines)} Type 3 fonts — NeurIPS rejects these")
+                print(f"  {red('FAIL')} {len(type3_lines)} Type 3 fonts detected (must fix)")
+            else:
+                print(f"  {green('OK')} No Type 3 fonts in main.pdf")
+        except FileNotFoundError:
+            print(f"  {yellow('WARN')} pdffonts not installed — skipping font check")
+        # 9c. PDF metadata anonymization
+        try:
+            import subprocess
+            r = subprocess.run(["pdfinfo", str(pdf)], capture_output=True, text=True)
+            for line in r.stdout.split("\n"):
+                if line.startswith("Author:") or line.startswith("Creator:"):
+                    val = line.split(":", 1)[1].strip()
+                    if val and val.lower() not in ("none", "anonymous"):
+                        warnings.append(f"PDF metadata has {line.split(':')[0]}: {val} (strip with exiftool)")
+                        print(f"  {yellow('WARN')} PDF {line.split(':')[0]}: {val} (strip with exiftool)")
+        except FileNotFoundError:
+            pass
+
+    # 10. texcount main-text page count
+    print("\n[10] texcount main-text page count...")
+    try:
+        import subprocess
+        r = subprocess.run(["texcount", "-inc", "-1", str(PAPER / "main.tex")],
+                           capture_output=True, text=True)
+        # texcount -1 returns just the word count
+        if r.returncode == 0:
+            words = r.stdout.strip().split("\n")[0]
+            try:
+                n_words = int(words)
+                # Approx 250-300 words per page in NeurIPS format
+                est_pages = n_words / 275
+                print(f"  Main-text words (approx): {n_words}, ~{est_pages:.1f} pages")
+                if est_pages > 9.0:
+                    warnings.append(f"Estimated ~{est_pages:.1f} main-text pages > 9 limit")
+                else:
+                    print(f"  {green('OK')} Estimated main-text page count under 9-page limit")
+            except ValueError:
+                print(f"  {yellow('WARN')} texcount returned: {words[:80]}")
+    except FileNotFoundError:
+        warnings.append("texcount not installed — install via TeX Live or check page count manually after build")
+        print(f"  {yellow('WARN')} texcount not installed (install via TeX Live)")
+
+    # 11. Croissant validator hint
+    print("\n[11] Croissant metadata: validate at...")
+    print(f"  Upload data/croissant/dhrp-8universe.json to:")
+    print(f"  https://huggingface.co/spaces/JoaquinVanscholen/croissant-checker")
+    print(f"  (manual step; cannot automate without Croissant Python library)")
+
     # Summary
     print("\n" + "=" * 70)
     if errors:
