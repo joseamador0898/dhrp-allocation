@@ -4,15 +4,18 @@
 % --- 0.5 page ---
 
 \paragraph{When does DHRP win?}
-DHRP achieves significant alpha in commodities and crypto (PSR $> 0.99$)
-but underperforms classical mean-variance in equity-heavy universes
-(DM, EM, global multi-asset). The pattern suggests DHRP's hierarchical
-inductive bias is most valuable when (i)~average pairwise correlation
-is low ($<0.5$ in commodities and crypto vs.\ $>0.7$ in DM/EM equities)
-and (ii)~the cross-asset structure is regime-dependent rather than
-factor-dominated. In high-correlation factor-driven equity universes,
-the closed-form mean-variance solution exploits factor exposures more
-efficiently than soft-routing through a binary tree.
+DHRP achieves significant alpha in commodities (PSR $0.999$) and crypto
+(PSR $0.991$), and is the best risk-parity-family method in DM, EM,
+sectors, and factors (PSR $\geq 0.86$ in each). It underperforms
+classical mean-variance in global multi-asset and EM, where MV's
+closed-form solution exploits factor exposures more efficiently than
+soft-routing through a binary tree. The pattern suggests DHRP's
+hierarchical inductive bias is most valuable when (i)~average pairwise
+correlation is low ($<0.5$ in commodities and crypto vs.\ $>0.7$ in
+DM/EM equities) and (ii)~the cross-asset structure is regime-dependent
+rather than factor-dominated. In the bonds universe, all methods bleed
+during the 2022--2023 rate-hike cycle (PSR $\approx 0$), so the
+underperformance is universe-level rather than method-specific.
 
 \paragraph{Failed hypotheses.}
 We hypothesized that LLM augmentation would lift performance in

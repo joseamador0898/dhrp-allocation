@@ -14,25 +14,31 @@ We evaluate eleven methods including DHRP, an LLM-augmented variant
 and three deep baselines (MLP, Transformer, PPO).
 %
 DHRP achieves statistically significant out-of-sample Sharpe ratios of
-$\mathbf{1.015 \pm 0.07}$ on commodities ($\text{PSR}=0.992$, FF3
+$\mathbf{1.304 \pm 0.10}$ on commodities ($\text{PSR}=0.999$, FF3
 $\alpha_{ann}=16.1\%$, $t=2.49$, $p=0.013$) and
-$\mathbf{1.268 \pm 0.05}$ on crypto ($\text{PSR}=0.990$), beats classical
-HRP in five of eight universes, and is statistically indistinguishable
-from the best method in commodities, crypto, sectors, and factors
-(Model Confidence Set).
+$\mathbf{1.290 \pm 0.05}$ on crypto ($\text{PSR}=0.991$).
+DHRP outperforms classical HRP in seven of eight universes
+(losing only on the bonds universe during the 2022--2023 rate-hike
+bear market) and is the best risk-parity-family method in DM
+($0.446 \pm 0.06$ vs.\ HRP $0.216$, EW $0.255$). Multi-method tests
+(MCS at $\alpha=0.05$) cannot distinguish DHRP from the best baseline in
+commodities, crypto, factors, or sectors.
 %
-However, DHRP underperforms classical mean-variance in equity-heavy
-universes (DM, EM, global multi-asset), which we trace to lower
-correlation diversity and dominance of factor-based momentum signals
-that are well-captured by simple covariance estimation. The Superior
-Predictive Ability test rejects no method against equal-weight at the 5\%
-level ($p=0.30$), supporting an asset-class-contingent view of allocation.
+However, DHRP underperforms classical mean-variance in global
+multi-asset and emerging markets, which we trace to lower correlation
+diversity and dominance of factor-based momentum signals that are
+well-captured by simple covariance estimation. The Superior Predictive
+Ability test rejects no method against equal-weight at the 5\% level
+across the full method panel, supporting an asset-class-contingent view
+of allocation.
 %
 We further test cross-modal LLM augmentation by fusing FinBERT
 \citep{Huang2023} embeddings of asset-attributed financial news into the
 soft-gating tree. Under multi-seed reporting, LLM augmentation provides
-\emph{no statistical benefit}---tied with DHRP in DM/EM and \emph{regressing}
-in commodities ($0.773 \pm 0.121$ vs.\ DHRP $1.015$, $\Delta=-0.24$ Sharpe).
+\emph{no statistical benefit}---tied with DHRP in EM ($0.474$ vs.\
+$0.469$, both PSR $\approx 0.87$), \emph{regressing} in DM ($0.239$ vs.\
+DHRP $0.446$, $\Delta=-0.21$ Sharpe), and \emph{regressing further} in
+commodities ($0.738 \pm 0.10$ vs.\ DHRP $1.304$, $\Delta=-0.57$ Sharpe).
 This honest negative ablation contrasts with single-seed claims in the
 recent LLM-finance literature \citep{Kirtac2025} and aligns with
 benchmark-paper precedents that LLMs do not reliably improve time-series
