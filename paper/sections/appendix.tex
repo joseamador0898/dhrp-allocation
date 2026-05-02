@@ -64,6 +64,48 @@ existential) and uses standard universal-approximation results for
 2-layer MLPs to encode the gate decision boundaries.
 \end{proof}
 
+\section{Optimal-Transport Interpretation of Soft Leaf Assignment}
+\label{app:ot}
+
+The DHRP soft leaf-assignment matrix admits an interpretation as an
+entropy-regularized optimal transport (OT) plan, connecting the
+architecture to the Sinkhorn literature \citep{Cuturi2013Sinkhorn}.
+
+\begin{proposition}[Sinkhorn equivalence]
+\label{prop:ot}
+Let $A \in \mathbb{R}^{n \times 2^L}$ denote the unnormalized
+leaf-assignment logits and $\bar A_{i,\ell} =
+\mathrm{softmax}(A_{i,:})_\ell$ the row-normalized assignment used by
+DHRP. Define a cost matrix $C_{i,\ell} = -A_{i,\ell}$ and a uniform
+asset marginal $\mu_i = 1/n$, with leaf marginal $\nu_\ell$ implied
+by $\bar A^\top \mu$. Then $\bar A$ is the unique solution to the
+entropy-regularized OT problem
+\[
+\min_{\Pi \in \Pi(\mu, \cdot)} \langle \Pi, C \rangle - H(\Pi),
+\quad H(\Pi) = -\sum_{i,\ell} \Pi_{i,\ell} \log \Pi_{i,\ell},
+\]
+restricted to row-stochastic plans with marginal $\mu$.
+\end{proposition}
+
+\begin{proof}[Proof sketch]
+Form the Lagrangian
+$\mathcal{L}(\Pi) = \sum_{i,\ell} \Pi_{i,\ell} C_{i,\ell}
++ \sum_{i,\ell} \Pi_{i,\ell} \log \Pi_{i,\ell}
+- \sum_i \lambda_i (\sum_\ell \Pi_{i,\ell} - \mu_i)$.
+First-order optimality gives $\Pi_{i,\ell} \propto \exp(-C_{i,\ell})
+= \exp(A_{i,\ell})$, with row-normalization recovering
+$\bar A_{i,\ell} = \mathrm{softmax}(A_{i,:})_\ell$. Strict convexity
+of $\Pi \mapsto \langle \Pi, C\rangle - H(\Pi)$ over the row-marginal
+polytope yields uniqueness.
+\end{proof}
+
+This view recasts each gradient step on $A$ as an implicit single-step
+Sinkhorn update with an adaptive cost. It justifies the soft assignment
+as principled differentiable clustering and motivates the
+inverse-temperature interpretation of logit magnitude: the limit of
+large $|A|$ recovers the hard-clustering solution used in
+Proposition~\ref{prop:recovery}.
+
 \section{Hyperparameters}
 \label{app:hyperparams}
 
