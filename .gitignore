@@ -43,26 +43,8 @@ paper/*.synctex.gz
 *.b64
 *.pkl
 
-# Azure ML build artifacts (not needed for submission)
-.azure_env_build/
-scripts/azure_*.py
-
-# Old paper drafts (canonical is results/hrp_paper_fixed.tex)
-paper/llm_dhrp_paper.pdf
-paper/llm_dhrp_paper.tex
-
-# Duplicate figures (keep only fig1-fig7 for the paper)
-results/figures/cumulative_returns.png
-results/figures/sharpe_bars.png
-results/figures/llm_delta.png
-results/figures/gating_interpretability.png
-
-# Large images not needed in repo
-results/correlations.png
-results/cumulative_drawdown.png
-results/distributions.png
-results/risk_return.png
-results/rolling_sharpe.png
-results/rolling_volatility.png
-results/summary.png
+# Build outputs not needed in repo
 *.pdf
+results/figures/*.png
+supplementary.zip
+.azure_env_build/

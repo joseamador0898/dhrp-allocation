@@ -1,74 +1,75 @@
-# DDifferentiable Hierarchical Risk Parity:Learning to Allocate with End-to-End Gradient Optimization
+# DHRP: A Differentiable Hierarchical Risk Parity Architecture and Multi-Universe Portfolio Benchmark
 
-This repo contains a compact public-data implementation of Differentiable Hierarchical Risk Parity (DHRP) and the LaTeX source of the associated paper.
+NeurIPS 2026 Evaluations & Datasets track submission.
 
-The goal is simple. Start from classical hierarchical risk parity, keep its diversification logic, and turn it into a fully differentiable allocation rule that can be trained end to end with modern gradient methods.
+DHRP turns López de Prado's Hierarchical Risk Parity into a fully differentiable
+portfolio allocation layer (temperature-scaled soft-gating tree, recovers
+classical HRP as $\tau \to 0$). The DHRP-8 benchmark evaluates 11 allocators
+across 8 asset universes with multi-seed Sharpe + Probabilistic Sharpe Ratio
+reporting.
 
-## Structure
+## Repo layout
 
-- `hrp_research_compact.ipynb` – single notebook that
-  - downloads public ETF data for developed and emerging markets,
-  - implements EW, MINVAR, MV, HRP, and DHRP,
-  - trains the DHRP layer on rolling windows,
-  - runs backtests for both universes,
-  - computes statistics, factor regressions, and econometric diagnostics,
-  - writes tables and figures to `results/`.
-- `results/`
-  - `hrp_paper_fixed.tex` – paper source: *Differentiable Hierarchical Risk Parity: Learning to Allocate with End-to-End Gradient Optimization*.
-  - `DM_*.csv`, `EM_*.csv` – exported performance tables from recent runs.
-  - `*.png` – summary plots, correlation heatmaps, return distributions, rolling Sharpe, cumulative wealth and drawdowns, risk–return scatter, and rolling volatility.
-
-The notebook and paper are aligned. The definitions, loss functions, and hyperparameters in the code match what is described in the text, and the main numbers in the tables and figures come from the same backtest.
-
-## Setup
-
-You can run everything in a local virtual environment.
-
-```bash
-python -m venv .venv
-source .venv/bin/activate  # Windows PowerShell: .venv\\Scripts\\Activate.ps1
-pip install -r requirements.txt
 ```
-
-The notebook expects a working internet connection to
-
-- download ETF prices via `yfinance`, and
-- pull Fama–French daily factors via `pandas-datareader`.
-
-## Running the experiments
-
-1. Open `hrp_research_compact.ipynb` in Jupyter or VS Code.
-2. Run cells from top to bottom.
-3. The DHRP layer will train for developed markets first, then for emerging markets.
-4. The backtest will compare EW, MINVAR, MV, HRP, and DHRP in both universes.
-5. Tables and figures will appear under `results/` with a timestamp in the file names.
-
-The main summary tables for Sharpe ratios, HAC t-statistics, bootstrap intervals, and Fama–French alphas are saved as CSV and printed in the notebook output. All plots used in the paper are also written to disk.
+paper/                 LaTeX source + final PDF (NeurIPS 2026 E&D format)
+  main.tex             entry point
+  sections/            8 body sections + appendix
+  tables/              auto-generated from results/*.csv
+  figures/             TikZ architecture diagram
+  references.bib       52 verified entries
+notebooks/
+  llm_dhrp_experiments.ipynb    canonical experiment notebook (cells 1-24)
+src/                   importable Python package
+  data/                price + text + macro feature loaders, universe configs
+  models/              dhrp_layer, llm_dhrp_layer, baselines, deep_baselines
+  training/            multi-seed trainer
+  evaluation/          backtest, statistics (PSR/SPA/MCS/DM/HAC), factor regs
+  visualization/       plots
+scripts/               7 user-facing scripts (see below)
+results/               headline CSVs (multi-seed pivots) + figures
+data/croissant/        Croissant 1.1 metadata for the DHRP-8 benchmark
+```
 
 ## Reproducing the paper
 
-To keep the workflow simple:
+```bash
+pip install -r requirements.txt
+bash scripts/reproduce_all.sh   # ~7 GPU-h on T4, ~2 GPU-h on A100
+```
 
-- Use the notebook to regenerate
-  - `DM_*.csv` and `EM_*.csv` tables, and
-  - all `.png` figures.
-- Compile `results/hrp_paper_fixed.tex` with your usual LaTeX toolchain.
+This runs `notebooks/llm_dhrp_experiments.ipynb` end-to-end, validates
+Croissant metadata, and verifies the headline result CSVs exist. See
+[REPRODUCIBILITY.md](REPRODUCIBILITY.md) for full per-seed-universe runtime
+details and [SUBMISSION.md](SUBMISSION.md) for the day-by-day submission
+checklist.
 
-The text, references, and figure captions in `hrp_paper_fixed.tex` are written to match the public-data notebook.
+## Building the paper
 
-## NeurIPS-style repo layout
+```bash
+cd paper && pdflatex main && bibtex main && pdflatex main && pdflatex main
+```
 
-This layout follows a pattern common in NeurIPS submissions:
+Body fits in 6 pages (NeurIPS limit is 9). Output: `paper/main.pdf`.
 
-- one main notebook or script that reproduces the core results,
-- a `results/` directory with tables and figures referenced in the paper,
-- a clean `requirements.txt` to make the environment easy to rebuild,
-- a short README that explains what the code does, how to run it, and how it connects to the paper.
+## Scripts
 
-If you want to extend the project, a natural next step is to split the notebook into a small Python package (`src/`) with
+| Script | Purpose |
+|---|---|
+| `reproduce_all.sh` | Single-command end-to-end reproduction |
+| `generate_paper_tables.py` | Build LaTeX tables from `results/*.csv` |
+| `generate_paper_figures.py` | Build PDF figures from `results/*.csv` |
+| `validate_paper.py` | Pre-submission integrity checks |
+| `anonymize_check.py` | Double-blind de-anonymization scanner |
+| `diagnose_llm_dhrp.py` | Optional: LLM-DHRP gate diagnostics (notebook cell 24) |
+| `probe_analysis.py` | Optional: linear-probe interpretability (notebook cell 24) |
 
-- a reusable DHRP layer,
-- a backtest driver that can be called from the command line,
-- a script that regenerates all tables and plots with one command.
+## Headline results (10 seeds, OOS 2020-07 to 2026-04)
 
-For the current scope, keeping everything in one well-documented notebook keeps the repo easy to clone and run.
+| Universe | DHRP Sharpe | PSR | Best baseline |
+|---|---|---|---|
+| Commodities | $1.30 \pm 0.10$ | 0.999 | RP (1.11) |
+| Crypto | $1.29 \pm 0.05$ | 0.991 | MV (1.11) |
+| DM | $0.45 \pm 0.06$ | 0.856 | MV (0.33) |
+
+DHRP beats classical HRP in 7 of 8 universes. LLM-augmented variant
+(LLM-DHRP) is reported as an honest negative ablation.

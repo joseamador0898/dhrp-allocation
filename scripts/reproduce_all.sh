@@ -22,10 +22,10 @@ if torch.cuda.is_available():
     print(f'GPU: {torch.cuda.get_device_name(0)}')
 "
 
-# 2. Install pinned dependencies (skip if already installed)
+# 2. Install dependencies (skip if already installed)
 if ! pip show sentence-transformers > /dev/null 2>&1; then
-    echo '>>> Installing dependencies from requirements-frozen.txt...'
-    pip install -q -r requirements-frozen.txt
+    echo '>>> Installing dependencies from requirements.txt...'
+    pip install -q -r requirements.txt
 else
     echo '>>> Dependencies already installed.'
 fi

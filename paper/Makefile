@@ -86,15 +86,15 @@ submit-check: tables figures pdf validate anon-check
 supplementary:
 	cd $(ROOT) && rm -f supplementary.zip && \
 	zip -r supplementary.zip \
-		data/croissant/dhrp-8universe.json \
+		README.md \
 		REPRODUCIBILITY.md \
 		SUBMISSION.md \
 		requirements.txt \
-		scripts/reproduce_all.sh \
-		scripts/generate_paper_tables.py \
-		scripts/generate_paper_figures.py \
-		scripts/diagnose_llm_dhrp.py \
-		scripts/probe_analysis.py
+		data/croissant/dhrp-8universe.json \
+		notebooks/llm_dhrp_experiments.ipynb \
+		src \
+		scripts \
+		-x 'src/**/__pycache__/*' '**/.ipynb_checkpoints/*' 'scripts/__pycache__/*'
 	@echo "supplementary.zip created in repo root"
 	@ls -lh $(ROOT)/supplementary.zip
 
