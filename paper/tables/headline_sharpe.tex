@@ -3,7 +3,8 @@
 \caption{Mean$\pm$std out-of-sample Sharpe across 10 seeds with Probabilistic Sharpe Ratio in brackets. Bold marks the best method per universe; $\ast$ marks $\text{PSR} > 0.95$ (significant at 5\% level). Classical baselines (EW, HRP, MV, MINVAR, MAXDIV, RP) are deterministic and reported without standard deviation.}
 \label{tab:headline}
 \centering
-\small
+\setlength{\tabcolsep}{3pt}
+\resizebox{\textwidth}{!}{%
 \begin{tabular}{lcccccccc}
 \toprule
 Method & DM & EM & CMD & Sect & Glb & Fact & Cry & Bnd \\
@@ -17,5 +18,6 @@ HRP & 0.216 [0.698] & 0.415 [0.841] & 0.971 [0.990$^{\ast}$] & 0.698 [0.953$^{\a
 DHRP & \textbf{$0.446{\pm}0.056$ [0.856]} & $0.469{\pm}0.004$ [0.870] & \textbf{$1.304{\pm}0.095$ [0.999$^{\ast}$]} & $0.677{\pm}0.050$ [0.946] & $0.357{\pm}0.092$ [0.799] & $0.682{\pm}0.033$ [0.949] & \textbf{$1.290{\pm}0.052$ [0.991$^{\ast}$]} & \textbf{$-0.896{\pm}0.055$ [0.016]} \\
 LLM-DHRP & $0.239{\pm}0.119$ [0.712] & $0.474{\pm}0.005$ [0.872] & $0.738{\pm}0.104$ [0.956$^{\ast}$] & --- & --- & --- & --- & --- \\
 \bottomrule
-\end{tabular}
+\end{tabular}%
+}
 \end{table}

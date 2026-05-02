@@ -3,6 +3,7 @@
 % Compiles with pdflatex; no external image processing required.
 \begin{figure}[t]
 \centering
+\resizebox{\textwidth}{!}{%
 \begin{tikzpicture}[
     node distance=0.9cm,
     every node/.style={font=\small},
@@ -62,7 +63,8 @@
 \node[below=0.6cm of T, xshift=0.5cm, font=\tiny, align=left] {%
   \textbf{Legend:} blue = price/covariance pathway \quad orange = text pathway \quad green = fusion / output.\\
   At $\tau \to 0$ with one-hot $A$, DHRP recovers classical HRP (Prop.~\ref{prop:recovery}).};
-\end{tikzpicture}
+\end{tikzpicture}%
+}
 \caption{DHRP and LLM-DHRP architecture. Price features, covariance,
 and (optional) per-asset text embeddings are fused via LayerNorm and a
 gated cross-attention residual into $h_t$, which routes through a

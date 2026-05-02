@@ -59,18 +59,13 @@ SKIP_FILE_EXT = {
     ".pyc", ".pyo", ".pkl", ".pt", ".pth", ".npz", ".bin",
     ".png", ".jpg", ".jpeg", ".gif", ".pdf",  # binary, can't grep meaningfully
     ".parquet",
+    # LaTeX build artifacts (regenerable, contain absolute paths)
+    ".aux", ".log", ".bbl", ".blg", ".out", ".toc", ".fls",
+    ".fdb_latexmk", ".synctex.gz",
 }
 
 # Specific files we EXPECT to contain identity (don't flag them)
 EXPECTED_IDENTITY_FILES = {
-    # Multi-venue paper drafts (these are NOT submitted; main.tex is)
-    "paper/multivenue/main_aaai.tex",
-    "paper/multivenue/main_iclr.tex",
-    "paper/multivenue/main_icml.tex",
-    "paper/multivenue/main_kdd.tex",
-    "paper/multivenue/main_neurips.tex",
-    "paper/llm_dhrp_paper.tex",  # superseded by paper/main.tex
-    "paper/llm_dhrp_paper.pdf",
     # Anonymization scanner itself contains the patterns!
     "scripts/anonymize_check.py",
     "scripts/validate_paper.py",
