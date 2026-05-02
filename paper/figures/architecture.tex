@@ -13,7 +13,7 @@
     cov/.style={box, fill=blue!12},
     fuse/.style={box, fill=green!18},
     tree/.style={box, fill=blue!22},
-    out/.style={box, fill=gray!18, minimum width=1.6cm},
+    outbox/.style={box, fill=gray!18, minimum width=1.6cm},
     arrow/.style={->, >=latex, thin, gray!70},
     dashedarrow/.style={->, >=latex, thin, gray!50, dashed},
 ]
@@ -36,9 +36,9 @@
 % --- Leaf budgets + assignment + output ---
 \node[box,    fill=blue!8, right=1.1cm of g1] (leaves) {Leaf budgets\\ $b_\ell = \prod_{(k,b)\in P_\ell} \pi_k[b]$};
 \node[box,    fill=blue!8, right=1.1cm of g2] (assign) {Soft assign\\ $A \in \mathbb{R}^{n\times 2^L}$};
-\node[out,    right=1.1cm of leaves]      (alloc) {$a_i = \sum_\ell A_{i\ell} b_\ell$};
-\node[out,    right=1.1cm of assign]      (vol)   {Inverse vol\\ blend ($\alpha$)};
-\node[out,    fill=green!12, below right=0.3cm and 0.6cm of alloc] (w) {Portfolio\\ $w \in \Delta^{n-1}$};
+\node[outbox,    right=1.1cm of leaves]      (alloc) {$a_i = \sum_\ell A_{i\ell} b_\ell$};
+\node[outbox,    right=1.1cm of assign]      (vol)   {Inverse vol\\ blend ($\alpha$)};
+\node[outbox,    fill=green!12, below right=0.3cm and 0.6cm of alloc] (w) {Portfolio\\ $w \in \Delta^{n-1}$};
 
 % --- Arrows ---
 \draw[arrow] (x) -- (norm);
