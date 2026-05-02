@@ -89,12 +89,14 @@ supplementary:
 		README.md \
 		REPRODUCIBILITY.md \
 		SUBMISSION.md \
+		LICENSE \
 		requirements.txt \
 		data/croissant/dhrp-8universe.json \
 		notebooks/llm_dhrp_experiments.ipynb \
+		tests \
 		src \
 		scripts \
-		-x 'src/**/__pycache__/*' '**/.ipynb_checkpoints/*' 'scripts/__pycache__/*'
+		-x 'src/**/__pycache__/*' '**/.ipynb_checkpoints/*' 'scripts/__pycache__/*' 'tests/__pycache__/*'
 	@echo "supplementary.zip created in repo root"
 	@ls -lh $(ROOT)/supplementary.zip
 

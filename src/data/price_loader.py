@@ -5,7 +5,6 @@ import time
 import numpy as np
 import pandas as pd
 import requests
-import pandas_datareader.data as pdr
 
 
 # Cache directory for downloaded data
@@ -316,6 +315,7 @@ def load_fama_french(start, end):
         print(f"  FF factors: {ff.shape[0]} days (cached)")
         return ff
 
+    import pandas_datareader.data as pdr
     ff = pdr.DataReader("F-F_Research_Data_Factors_daily", "famafrench", start, end)[0] / 100
     ff.to_csv(cp)
     print(f"  FF factors: {ff.shape[0]} days")

@@ -54,6 +54,13 @@ SKIP_DIRS = {
     "results/full",  # large backtest CSVs
     "results/models",  # binary checkpoints
     ".ipynb_checkpoints",
+    ".claude",  # local Claude Code settings (gitignored)
+    ".azure_env_build",
+}
+SKIP_FILES = {
+    ".env",  # local secrets (gitignored)
+    ".env.local",
+    "service_account.json",
 }
 SKIP_FILE_EXT = {
     ".pyc", ".pyo", ".pkl", ".pt", ".pth", ".npz", ".bin",
@@ -142,6 +149,8 @@ def main(paper_only: bool = False) -> int:
             if not p.is_file():
                 continue
             if should_skip_dir(p):
+                continue
+            if p.name in SKIP_FILES:
                 continue
             if p.suffix.lower() in SKIP_FILE_EXT:
                 continue

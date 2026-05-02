@@ -1,55 +1,90 @@
-# DHRP: A Differentiable Hierarchical Risk Parity Architecture and Multi-Universe Portfolio Benchmark
+# DHRP: Differentiable Hierarchical Risk Parity
 
-NeurIPS 2026 Evaluations & Datasets track submission.
+A differentiable extension of López de Prado's Hierarchical Risk Parity, plus
+the **DHRP-8** multi-universe portfolio benchmark. Submitted to NeurIPS 2026
+(Evaluations & Datasets track).
 
-DHRP turns López de Prado's Hierarchical Risk Parity into a fully differentiable
-portfolio allocation layer (temperature-scaled soft-gating tree, recovers
-classical HRP as $\tau \to 0$). The DHRP-8 benchmark evaluates 11 allocators
-across 8 asset universes with multi-seed Sharpe + Probabilistic Sharpe Ratio
-reporting.
+- DHRP recovers classical HRP as gate temperature $\tau \to 0$
+- 11 allocators × 8 asset universes × 10 random seeds
+- Headline: DHRP commodities Sharpe $1.30 \pm 0.10$ (PSR $0.999$)
+- Honest negative ablation: FinBERT-augmented DHRP does not improve
 
-## Repo layout
+## Quick start
+
+```bash
+git clone <this-repo>
+cd dhrp-allocation
+pip install -r requirements.txt
+python tests/test_imports.py     # smoke test (~5 s, verifies environment)
+```
+
+You should see:
 
 ```
-paper/                 LaTeX source + final PDF (NeurIPS 2026 E&D format)
-  main.tex             entry point
-  sections/            8 body sections + appendix
-  tables/              auto-generated from results/*.csv
-  figures/             TikZ architecture diagram
-  references.bib       52 verified entries
-notebooks/
-  llm_dhrp_experiments.ipynb    canonical experiment notebook (cells 1-24)
-src/                   importable Python package
-  data/                price + text + macro feature loaders, universe configs
-  models/              dhrp_layer, llm_dhrp_layer, baselines, deep_baselines
-  training/            multi-seed trainer
-  evaluation/          backtest, statistics (PSR/SPA/MCS/DM/HAC), factor regs
-  visualization/       plots
-scripts/               7 user-facing scripts (see below)
-results/               headline CSVs (multi-seed pivots) + figures
-data/croissant/        Croissant 1.1 metadata for the DHRP-8 benchmark
+DHRPLayer: OK (params=32528)
+LLMDHRPLayer: OK (params=157480)
+MLPWithCovPolicy: OK (params=39189)
+Baselines: OK
+Sharpe: OK (...)
+All tests passed!
 ```
 
 ## Reproducing the paper
 
 ```bash
-pip install -r requirements.txt
-bash scripts/reproduce_all.sh   # ~7 GPU-h on T4, ~2 GPU-h on A100
+bash scripts/reproduce_all.sh
 ```
 
-This runs `notebooks/llm_dhrp_experiments.ipynb` end-to-end, validates
-Croissant metadata, and verifies the headline result CSVs exist. See
-[REPRODUCIBILITY.md](REPRODUCIBILITY.md) for full per-seed-universe runtime
-details and [SUBMISSION.md](SUBMISSION.md) for the day-by-day submission
-checklist.
+Runs the canonical notebook end-to-end: ~7 GPU-h on T4, ~2 GPU-h on
+A100. Outputs CSVs to `results/` and figures to `results/figures/`.
 
-## Building the paper
+For a per-cell walkthrough, open
+[`notebooks/llm_dhrp_experiments.ipynb`](notebooks/llm_dhrp_experiments.ipynb)
+and run cells 1–24 in order. See [REPRODUCIBILITY.md](REPRODUCIBILITY.md)
+for cell-by-cell descriptions and compute budget.
+
+## Verifying the headline numbers
+
+After the notebook completes, the multi-seed pivot tables in
+`results/sharpe_pivot_multiseed_mean.csv` and
+`results/psr_pivot_multiseed.csv` should reproduce the paper's
+Table 1:
+
+| Universe | DHRP Sharpe | PSR | Best baseline |
+|---|---|---|---|
+| Commodities | $1.30 \pm 0.10$ | 0.999 | RP (1.11) |
+| Crypto | $1.29 \pm 0.05$ | 0.991 | MV (1.11) |
+| DM | $0.45 \pm 0.06$ | 0.856 | MV (0.33) |
+
+DHRP beats classical HRP in 7 of 8 universes.
+
+## Building the paper PDF
 
 ```bash
-cd paper && pdflatex main && bibtex main && pdflatex main && pdflatex main
+cd paper
+pdflatex main && bibtex main && pdflatex main && pdflatex main
+# → paper/main.pdf (15 pages: 6-page body + bibliography + checklist + appendix)
 ```
 
-Body fits in 6 pages (NeurIPS limit is 9). Output: `paper/main.pdf`.
+Requires a TeX distribution (MiKTeX on Windows, TeX Live on Linux/macOS).
+
+## Repo layout
+
+```
+paper/                LaTeX source (NeurIPS 2026 E&D format)
+notebooks/            Canonical experiment notebook (cells 1–24)
+src/                  Importable Python package
+  data/               price + text + macro feature loaders
+  models/             dhrp_layer, llm_dhrp_layer, baselines
+  training/           multi-seed trainer
+  evaluation/         backtest, statistics, factor regressions
+  visualization/      plots
+scripts/              7 reviewer-facing scripts (see table below)
+data/croissant/       Croissant 1.1 metadata for the DHRP-8 benchmark
+results/              headline CSVs + figures (regenerated)
+tests/                smoke tests
+docs/                 supplementary theory notes
+```
 
 ## Scripts
 
@@ -60,16 +95,13 @@ Body fits in 6 pages (NeurIPS limit is 9). Output: `paper/main.pdf`.
 | `generate_paper_figures.py` | Build PDF figures from `results/*.csv` |
 | `validate_paper.py` | Pre-submission integrity checks |
 | `anonymize_check.py` | Double-blind de-anonymization scanner |
-| `diagnose_llm_dhrp.py` | Optional: LLM-DHRP gate diagnostics (notebook cell 24) |
-| `probe_analysis.py` | Optional: linear-probe interpretability (notebook cell 24) |
+| `diagnose_llm_dhrp.py` | Optional LLM-DHRP gate diagnostics |
+| `probe_analysis.py` | Optional linear-probe interpretability |
 
-## Headline results (10 seeds, OOS 2020-07 to 2026-04)
+## Citation
 
-| Universe | DHRP Sharpe | PSR | Best baseline |
-|---|---|---|---|
-| Commodities | $1.30 \pm 0.10$ | 0.999 | RP (1.11) |
-| Crypto | $1.29 \pm 0.05$ | 0.991 | MV (1.11) |
-| DM | $0.45 \pm 0.06$ | 0.856 | MV (0.33) |
+Citation will be added on acceptance.
 
-DHRP beats classical HRP in 7 of 8 universes. LLM-augmented variant
-(LLM-DHRP) is reported as an honest negative ablation.
+## License
+
+[MIT](LICENSE).
