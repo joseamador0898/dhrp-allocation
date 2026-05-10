@@ -2,10 +2,16 @@
 
 A differentiable extension of López de Prado's Hierarchical Risk Parity, plus the **DHRP-8** multi-universe portfolio benchmark. NeurIPS 2026 Evaluations & Datasets track submission.
 
-- DHRP recovers classical HRP as gate temperature $\tau \to 0$
-- 11 allocators, 8 asset universes, 10 random seeds
-- Headline: DHRP commodities Sharpe $1.30 \pm 0.10$ (PSR $0.999$)
-- Honest negative ablation: FinBERT-augmented DHRP does not improve
+- DHRP reduces to a classical HRP allocation under explicit limit
+  assumptions (Proposition 1; this is a relaxation, not a universal
+  recovery result).
+- 11 allocators, 8 asset universes, 10 random seeds.
+- Headline: DHRP commodities Sharpe $1.30 \pm 0.10$, PSR $0.999$
+  (positive sample Sharpe; the FF3 alpha is $6.3\%$, $t=1.58$, not
+  significant at the 5\% level).
+- Honest negative ablation: a global FinBERT text summary does not
+  improve DHRP under multi-seed reporting on the universes where text
+  features are available (DM, EM, commodities).
 
 ## Quick start
 
@@ -85,13 +91,16 @@ Plus about 30 minutes of CPU time for figures, table generation, and Croissant v
 
 After the notebook completes, the multi-seed pivot tables in `results/sharpe_pivot_multiseed_mean.csv` and `results/psr_pivot_multiseed.csv` should match Table 1 in the paper:
 
-| Universe | DHRP Sharpe | PSR | Best baseline |
+| Universe | DHRP Sharpe | PSR | Best non-DHRP baseline |
 |---|---|---|---|
 | Commodities | $1.30 \pm 0.10$ | 0.999 | RP (1.11) |
 | Crypto | $1.29 \pm 0.05$ | 0.991 | MV (1.11) |
 | DM | $0.45 \pm 0.06$ | 0.856 | MV (0.33) |
 
-DHRP beats classical HRP in 7 of 8 universes.
+DHRP beats classical HRP in 6 of 8 universes; the two losses (sectors
+and factors) are within 0.03 Sharpe of HRP. PSR > 0.95 means the
+out-of-sample Sharpe is significantly positive; it is not a paired test
+against any specific baseline.
 
 Verification checklist:
 

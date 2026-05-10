@@ -142,8 +142,20 @@ def rolling_backtest(
         if train_end <= train_days:
             rebalance_idx += 1
             continue
-        train = rets.iloc[train_end - train_days : train_end].fillna(0)
-        if train.isna().mean().mean() > (1 - min_coverage):
+        # Compute per-asset coverage BEFORE imputation so late-inception assets
+        # are correctly excluded. Using fillna(0) before the check would silence
+        # the missingness signal entirely.
+        train_raw = rets.iloc[train_end - train_days : train_end]
+        # Drop assets whose coverage in this train window falls below
+        # min_coverage (e.g. CPER prior to its inception in late 2011 / 2014).
+        per_asset_coverage = train_raw.notna().mean()
+        keep_assets = per_asset_coverage[per_asset_coverage >= min_coverage].index
+        if len(keep_assets) < 2:
+            rebalance_idx += 1
+            continue
+        train = train_raw[keep_assets].fillna(0)
+        # Window-level coverage check (overall fraction of present cells).
+        if train_raw[keep_assets].notna().mean().mean() < min_coverage:
             rebalance_idx += 1
             continue
         mu = train.mean().values * 252
@@ -160,7 +172,9 @@ def rolling_backtest(
         # When step_days >= test_days this is a no-op (preserves legacy
         # behavior for DM and EM).
         record_days = min(test_days, step_days)
-        test = rets.iloc[t : t + record_days].fillna(0)
+        # Restrict test slice to the same assets we trained on so that
+        # late-inception assets do not contribute synthetic zero returns.
+        test = rets.iloc[t : t + record_days][keep_assets].fillna(0)
         if test.empty:
             rebalance_idx += 1
             continue

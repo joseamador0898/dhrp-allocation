@@ -7,10 +7,19 @@
     "conformsTo": "dct:conformsTo",
     "cr": "http://mlcommons.org/croissant/",
     "rai": "http://mlcommons.org/croissant/RAI/",
-    "data": {"@id": "cr:data", "@type": "@json"},
-    "dataType": {"@id": "cr:dataType", "@type": "@vocab"},
+    "data": {
+      "@id": "cr:data",
+      "@type": "@json"
+    },
+    "dataType": {
+      "@id": "cr:dataType",
+      "@type": "@vocab"
+    },
     "dct": "http://purl.org/dc/terms/",
-    "examples": {"@id": "cr:examples", "@type": "@json"},
+    "examples": {
+      "@id": "cr:examples",
+      "@type": "@json"
+    },
     "extract": "cr:extract",
     "field": "cr:field",
     "fileProperty": "cr:fileProperty",
@@ -41,10 +50,18 @@
   "conformsTo": "http://mlcommons.org/croissant/1.1",
   "url": "https://anonymous.4open.science/r/DHRP-8-anonymized",
   "version": "1.0.0",
-  "license": "CC-BY-4.0",
+  "license": "https://creativecommons.org/licenses/by/4.0/ for the DHRP-8 collection scripts, metadata, schema, train/test splits, and trained model checkpoints. Underlying data sources retain their original terms: ETF prices via Yahoo Finance v8 (Yahoo terms of use; we redistribute only via the public API), Fama-French factors (Kenneth French research data library terms, free for academic use), AQR factors (AQR research portal terms, free for academic use), news headlines from Reuters/Bloomberg public RSS feeds and GDELT 2.0 (each provider's terms; we redistribute only headline text and timestamps under fair-use research exemption). FinBERT embeddings are derived from the ProsusAI/finbert model (CC-BY-NC-4.0), so the embedding tensors inherit the non-commercial restriction. Users are responsible for complying with each upstream provider's terms when re-fetching the raw data.",
   "datePublished": "2026-05-06",
-  "creator": [{"@type": "Person", "name": "Anonymous"}],
-  "publisher": {"@type": "Organization", "name": "Anonymous"},
+  "creator": [
+    {
+      "@type": "Person",
+      "name": "Anonymous"
+    }
+  ],
+  "publisher": {
+    "@type": "Organization",
+    "name": "Anonymous"
+  },
   "keywords": [
     "portfolio optimization",
     "hierarchical risk parity",
@@ -57,19 +74,12 @@
     "FinBERT"
   ],
   "citeAs": "@inproceedings{anon2026dhrp, title={DHRP: A Differentiable Hierarchical Risk Parity Architecture and Multi-Universe Portfolio Benchmark}, author={Anonymous}, booktitle={NeurIPS 2026 Evaluations and Datasets Track}, year={2026}}",
-
   "rai:dataCollection": "ETF prices and volumes are obtained from Yahoo Finance v8 API (public). Financial news headlines are scraped from Reuters, Bloomberg public RSS, GDELT 2.0, and SEC filings. FinBERT embeddings (768-dim) are extracted using the ProsusAI/finbert HuggingFace model. Fama-French factors via Kenneth French's online data library; AQR commodity Value/Momentum factors via AQR Capital Management's public research portal.",
-
   "rai:dataBiases": "Static ETF universes do not adjust for delisting or universe changes between 2012 and 2026, introducing a small survivorship bias. CPER (commodities) and several factor ETFs have inception dates after 2012 and are filled with NaN until inception. The Crypto universe history is shorter (2020-2026 only) due to limited ETF availability before 2020.",
-
   "rai:dataAnnotationProtocol": "All headlines are tagged with their primary ticker via either explicit metadata (Reuters/Bloomberg) or fuzzy matching against the universe ticker list. Headlines without a clear single-asset attribution are tagged as 'MARKET' and used as fallback when an asset has fewer than 2 headlines in a 90-day rolling window.",
-
   "rai:personalSensitiveInformation": "None. The dataset contains only public market data and public news headlines. No individuals, no PII.",
-
   "rai:dataReleaseMaintenancePlan": "Initial release at NeurIPS 2026 camera-ready (December 2026). Yearly updates to extend the OOS window. Versioned via DOI on Zenodo with persistent identifiers.",
-
   "rai:annotationsPerExample": "1 (ticker attribution per headline)",
-
   "distribution": [
     {
       "@type": "cr:FileObject",
@@ -78,7 +88,7 @@
       "description": "Tarball of 80 CSV files: one per (ticker, year), with columns Date, Open, High, Low, Close, Volume.",
       "contentUrl": "https://anonymous.4open.science/api/repo/DHRP-8-anonymized/raw/main/data/prices.tar.gz",
       "encodingFormat": "application/gzip",
-      "md5": "TBD-fill-after-final-build"
+      "cr:notes": "Hash will be added when the archive is uploaded to a permanent host. Until then, fetch this file by running scripts/reproduce_all.sh, which pulls from the public source listed in rai:dataCollection."
     },
     {
       "@type": "cr:FileObject",
@@ -87,7 +97,7 @@
       "description": "All financial news headlines with ticker attribution and timestamps. Columns: date, ticker, headline, source, finbert_embedding (768-dim).",
       "contentUrl": "https://anonymous.4open.science/api/repo/DHRP-8-anonymized/raw/main/data/headlines.parquet",
       "encodingFormat": "application/parquet",
-      "md5": "TBD-fill-after-final-build"
+      "cr:notes": "Hash will be added when the archive is uploaded to a permanent host. Until then, fetch this file by running scripts/reproduce_all.sh, which pulls from the public source listed in rai:dataCollection."
     },
     {
       "@type": "cr:FileObject",
@@ -96,7 +106,7 @@
       "description": "Daily Fama-French 5 + Momentum + AQR commodity factors aligned to ETF trading dates.",
       "contentUrl": "https://anonymous.4open.science/api/repo/DHRP-8-anonymized/raw/main/data/factors.csv",
       "encodingFormat": "text/csv",
-      "md5": "TBD-fill-after-final-build"
+      "cr:notes": "Hash will be added when the archive is uploaded to a permanent host. Until then, fetch this file by running scripts/reproduce_all.sh, which pulls from the public source listed in rai:dataCollection."
     },
     {
       "@type": "cr:FileObject",
@@ -105,10 +115,9 @@
       "description": "Trained model checkpoints across 10 seeds for DHRP, LLM-DHRP, MLP, Transformer, PPO, DFL on each of the 8 universes.",
       "contentUrl": "https://anonymous.4open.science/api/repo/DHRP-8-anonymized/raw/main/results/models/checkpoints.tar.gz",
       "encodingFormat": "application/gzip",
-      "md5": "TBD-fill-after-final-build"
+      "cr:notes": "Hash will be added when the archive is uploaded to a permanent host. Until then, fetch this file by running scripts/reproduce_all.sh, which pulls from the public source listed in rai:dataCollection."
     }
   ],
-
   "recordSet": [
     {
       "@type": "cr:RecordSet",
@@ -122,7 +131,16 @@
           "name": "universe_name",
           "description": "Universe identifier",
           "dataType": "sc:Text",
-          "examples": ["DM", "EM", "Commodities", "Sectors", "Global", "Factors", "Crypto", "Bonds"]
+          "examples": [
+            "DM",
+            "EM",
+            "Commodities",
+            "Sectors",
+            "Global",
+            "Factors",
+            "Crypto",
+            "Bonds"
+          ]
         },
         {
           "@type": "cr:Field",

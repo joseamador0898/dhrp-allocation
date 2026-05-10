@@ -1,14 +1,13 @@
 """Anonymization scanner for double-blind submission.
 
-Scans the entire repo (excluding ignored directories) for strings that
-de-anonymize the authors:
-  - Real names (configurable list)
-  - Email addresses
-  - Personal GitHub URLs
-  - University affiliations
-  - Local file paths that leak identity
+Scans the repo for strings that could de-anonymize the authors. Uses
+generic regex patterns (emails, GitHub handles, university domains,
+local user paths) so the scanner itself contains no real names and is
+safe to ship in the supplementary package.
 
-Run BEFORE creating an anonymous.4open.science fork.
+Author-specific patterns can be added in a private file named
+`.anonymize_extras.txt` at the repo root, one regex per line. That
+file is gitignored.
 
 Usage:
     python scripts/anonymize_check.py                # scan repo
@@ -18,80 +17,72 @@ Usage:
 from __future__ import annotations
 
 import argparse
+import re
 import sys
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent
 
-# De-anonymizing strings to detect.
-# IMPORTANT: keep the list in lower case for case-insensitive matching.
-DEANONYMIZE_PATTERNS = [
-    # Author identity
-    "jose amador",
-    "joseamador",
-    "amador, jose",
-    "jlaj@",
-    "jlaj@connect.ust.hk",
-    # GitHub
-    "github.com/joseamador0898",
-    "github.com/joseamador",
-    # Local user paths
-    "/users/luigi",
-    "c:\\users\\luigi",
-    "c:/users/luigi",
-    # University affiliation strings
-    "hong kong university of science",
-    "hkust",
-    "connect.ust.hk",
-    # Other typical identity leaks
-    "linkedin.com/in/",
+# Generic regex patterns (no real identifiers). Case-insensitive.
+DEANONYMIZE_REGEXES = [
+    # Email addresses (excluding obvious anonymized stand-ins)
+    (r"\b[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}\b", "email-like"),
+    # GitHub user URLs (https or git form). Anonymous mirrors live on
+    # anonymous.4open.science, so a real github.com user URL is suspect.
+    (r"github\.com[/:][\w.-]+/", "github-user-url"),
+    # LinkedIn profile URLs
+    (r"linkedin\.com/in/[\w-]+", "linkedin-url"),
+    # University-style email domains commonly seen in finance ML papers
+    (r"\b[\w.-]+@[\w.-]+\.(edu|edu\.\w+|ac\.\w+)\b", "academic-email"),
+    # Local user-home paths on Windows or *nix that leak a username
+    (r"[Cc]:[/\\]+Users[/\\]+(?!<|placeholder)[\w.-]+", "windows-user-path"),
+    (r"/home/(?!user|root|placeholder)[\w.-]+", "linux-home-path"),
+    (r"/Users/(?!shared|guest|placeholder)[\w.-]+", "macos-user-path"),
 ]
 
-# Files / directories to skip
+# Optional private extension file (gitignored). One Python regex per line.
+EXTRAS_FILE = ROOT / ".anonymize_extras.txt"
+
+# Files / directories never scanned.
 SKIP_DIRS = {
     ".git", "__pycache__", "node_modules", ".venv", "venv",
-    "data/cache",  # large cached CSVs
-    "results/full",  # large backtest CSVs
-    "results/models",  # binary checkpoints
-    ".ipynb_checkpoints",
-    ".claude",  # local Claude Code settings (gitignored)
-    ".azure_env_build",
+    "data/cache", "results/full", "results/models",
+    ".ipynb_checkpoints", ".claude", ".azure_env_build",
 }
-SKIP_FILES = {
-    ".env",  # local secrets (gitignored)
-    ".env.local",
-    "service_account.json",
-}
+SKIP_FILES = {".env", ".env.local", "service_account.json"}
 SKIP_FILE_EXT = {
     ".pyc", ".pyo", ".pkl", ".pt", ".pth", ".npz", ".bin",
-    ".png", ".jpg", ".jpeg", ".gif", ".pdf",  # binary, can't grep meaningfully
-    ".parquet",
-    # LaTeX build artifacts (regenerable, contain absolute paths)
+    ".png", ".jpg", ".jpeg", ".gif", ".pdf", ".parquet",
     ".aux", ".log", ".bbl", ".blg", ".out", ".toc", ".fls",
     ".fdb_latexmk", ".synctex.gz",
+    ".sty", ".cls",  # vendored LaTeX style files
+    ".zip", ".tar", ".gz", ".whl",  # archive bundles
 }
 
-# Specific files we EXPECT to contain identity (don't flag them)
-EXPECTED_IDENTITY_FILES = {
-    # Anonymization scanner itself contains the patterns!
-    "scripts/anonymize_check.py",
-    "scripts/validate_paper.py",
-    # Plan / scratchwork
-    "REPRODUCIBILITY.md",  # may contain anonymized URL only
-}
+# This file (the scanner) lists the patterns themselves; do not flag.
+EXPECTED_IDENTITY_FILES = {"scripts/anonymize_check.py"}
+
+
+def load_extras() -> list[tuple[str, str]]:
+    if not EXTRAS_FILE.exists():
+        return []
+    extras: list[tuple[str, str]] = []
+    for raw in EXTRAS_FILE.read_text(encoding="utf-8").splitlines():
+        line = raw.strip()
+        if not line or line.startswith("#"):
+            continue
+        extras.append((line, "extras"))
+    return extras
 
 
 def should_skip_dir(p: Path) -> bool:
-    """True if this path is inside any directory we want to skip."""
     try:
         rel = p.relative_to(ROOT).as_posix()
     except ValueError:
         return False
     parts = set(p.parts)
-    # Skip if any path component is in SKIP_DIRS
     if parts & {".git", "__pycache__", "node_modules", ".venv", "venv", ".ipynb_checkpoints"}:
         return True
-    # Skip if relative path starts with any skip-dir prefix
     for skip in SKIP_DIRS:
         if rel == skip or rel.startswith(skip + "/"):
             return True
@@ -103,22 +94,30 @@ def is_expected(p: Path) -> bool:
     return rel in EXPECTED_IDENTITY_FILES
 
 
-def scan_file(path: Path) -> list[tuple[int, str, str]]:
-    """Return list of (line_no, pattern, snippet)."""
+def compile_patterns() -> list[tuple[re.Pattern[str], str]]:
+    compiled: list[tuple[re.Pattern[str], str]] = []
+    for src, label in DEANONYMIZE_REGEXES + load_extras():
+        try:
+            compiled.append((re.compile(src, re.IGNORECASE), label))
+        except re.error as exc:
+            print(f"  bad regex skipped: {src!r} ({exc})", file=sys.stderr)
+    return compiled
+
+
+def scan_file(path: Path, patterns: list[tuple[re.Pattern[str], str]]) -> list[tuple[int, str, str]]:
     flags: list[tuple[int, str, str]] = []
     try:
         text = path.read_text(encoding="utf-8", errors="ignore")
     except Exception:
         return flags
     for i, line in enumerate(text.split("\n"), 1):
-        lower = line.lower()
-        for pat in DEANONYMIZE_PATTERNS:
-            if pat in lower:
+        for pat, label in patterns:
+            if pat.search(line):
                 snippet = line.strip()
                 if len(snippet) > 100:
                     snippet = snippet[:100] + "..."
-                flags.append((i, pat, snippet))
-                break  # one flag per line is enough
+                flags.append((i, label, snippet))
+                break
     return flags
 
 
@@ -127,12 +126,15 @@ def main(paper_only: bool = False) -> int:
     print("  Anonymization Scanner for Double-Blind Submission")
     print("=" * 70)
 
+    patterns = compile_patterns()
     if paper_only:
-        roots = [ROOT / "paper", ROOT / "data" / "croissant", ROOT / "REPRODUCIBILITY.md"]
-        print("Mode: paper-only (paper/ + data/croissant/ + REPRODUCIBILITY.md)")
+        roots = [ROOT / "paper", ROOT / "data" / "croissant", ROOT / "README.md"]
+        print("Mode: paper-only (paper/ + data/croissant/ + README.md)")
     else:
         roots = [ROOT]
         print(f"Mode: full repo scan from {ROOT}")
+    if EXTRAS_FILE.exists():
+        print(f"Extras: loaded {len(patterns) - len(DEANONYMIZE_REGEXES)} private patterns from {EXTRAS_FILE.name}")
 
     total_files = 0
     total_flags = 0
@@ -144,7 +146,6 @@ def main(paper_only: bool = False) -> int:
             paths = [root]
         else:
             paths = list(root.rglob("*"))
-
         for p in paths:
             if not p.is_file():
                 continue
@@ -155,7 +156,7 @@ def main(paper_only: bool = False) -> int:
             if p.suffix.lower() in SKIP_FILE_EXT:
                 continue
             total_files += 1
-            issues = scan_file(p)
+            issues = scan_file(p, patterns)
             if not issues:
                 continue
             if is_expected(p):
@@ -168,37 +169,35 @@ def main(paper_only: bool = False) -> int:
 
     if flagged:
         print("\033[31m" + "=" * 70 + "\033[0m")
-        print("\033[31m  DEANONYMIZING STRINGS FOUND (must remove before submission)\033[0m")
+        print("\033[31m  DE-ANONYMIZING STRINGS FOUND (review before submission)\033[0m")
         print("\033[31m" + "=" * 70 + "\033[0m")
         for path, issues in flagged:
             rel = path.relative_to(ROOT)
             print(f"\n\033[33m{rel}\033[0m  ({len(issues)} hits)")
-            for line_no, pat, snippet in issues[:5]:
-                print(f"  L{line_no} [{pat!r}]: {snippet}")
+            for line_no, label, snippet in issues[:5]:
+                print(f"  L{line_no} [{label}]: {snippet}")
             if len(issues) > 5:
                 print(f"  ... and {len(issues) - 5} more")
+        print()
+        return 1
 
     if expected_hits:
-        print("\n\033[36m  Files with identity (expected — not flagged):\033[0m")
+        print("\033[36m  Files with identity (expected, not flagged):\033[0m")
         for p in expected_hits:
             print(f"  - {p.relative_to(ROOT).as_posix()}")
+        print()
 
-    print("\n" + "=" * 70)
-    if not flagged:
-        print("\033[32m  PASSED: no de-anonymizing strings found.\033[0m")
-        print("  Safe to push the contents of paper/ + data/croissant/ + scripts/")
-        print("  to anonymous.4open.science")
-    else:
-        print(f"\033[31m  FAILED: {total_flags} de-anonymizing strings in {len(flagged)} files\033[0m")
-        print("  Either delete those files from the anonymous fork or scrub the strings.")
     print("=" * 70)
-
-    return 0 if not flagged else 1
+    print("\033[32m  PASSED: no de-anonymizing strings found.\033[0m")
+    print("  Safe to push the contents of paper/ + data/croissant/ + scripts/")
+    print("  to anonymous.4open.science")
+    print("=" * 70)
+    return 0
 
 
 if __name__ == "__main__":
-    p = argparse.ArgumentParser()
-    p.add_argument("--paper-only", action="store_true",
-                   help="Only scan paper/, data/croissant/, REPRODUCIBILITY.md")
-    args = p.parse_args()
+    parser = argparse.ArgumentParser()
+    parser.add_argument("--paper-only", action="store_true",
+                        help="Restrict scan to paper/ + data/croissant/ + README.md")
+    args = parser.parse_args()
     sys.exit(main(paper_only=args.paper_only))

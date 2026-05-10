@@ -72,16 +72,18 @@ We evaluate eleven methods including DHRP, an LLM-augmented variant
 (LLM-DHRP), six classical baselines (EW, MV, MINVAR, HRP, RP, MAXDIV),
 and three deep baselines (MLP, Transformer, PPO).
 %
-DHRP achieves statistically significant out-of-sample Sharpe ratios of
-$\mathbf{1.304 \pm 0.10}$ on commodities ($\text{PSR}=0.999$, FF3
-$\alpha_{ann}=16.1\%$, $t=2.49$, $p=0.013$) and
+DHRP achieves out-of-sample Sharpe ratios of
+$\mathbf{1.304 \pm 0.10}$ on commodities ($\text{PSR}=0.999$) and
 $\mathbf{1.290 \pm 0.05}$ on crypto ($\text{PSR}=0.991$).
-DHRP outperforms classical HRP in seven of eight universes
-(losing only on the bonds universe during the 2022--2023 rate-hike
-bear market) and is the best risk-parity-family method in DM
-($0.446 \pm 0.06$ vs.\ HRP $0.216$, EW $0.255$). Multi-method tests
-(MCS at $\alpha=0.05$) cannot distinguish DHRP from the best baseline in
-commodities, crypto, factors, or sectors.
+DHRP beats classical HRP in six of eight universes (the two losses,
+sectors and factors, are within 0.03 Sharpe of HRP) and is the best
+risk-parity-family method in DM ($0.446 \pm 0.06$ vs.\ HRP $0.216$,
+EW $0.255$). Fama--French 3-factor regression on commodities gives
+$\alpha_{ann}=6.3\%$ ($t=1.58$); the headline therefore reflects a
+positive sample Sharpe (PSR$=0.999$) rather than a significant
+risk-adjusted alpha. Multi-method tests (MCS at $\alpha=0.05$) cannot
+distinguish DHRP from the best classical baseline in commodities or
+crypto.
 %
 However, DHRP underperforms classical mean-variance in global
 multi-asset and emerging markets, which we trace to lower correlation
@@ -346,42 +348,74 @@ penalty, concentration (HHI), and turnover penalty:
 The HRP regularizer warm-starts from classical HRP weights, providing
 the inductive bias that supports the recovery property below.
 
-\begin{proposition}[HRP recovery]
+\begin{proposition}[HRP recovery, conditional form]
 \label{prop:recovery}
-For any $\Sigma$ with a unique agglomerative-clustering tree $T^*$,
-there exists a parameter setting $(\theta_\tau, \theta_\beta, A) \to \theta^*$
-and temperatures $\tau_k \to 0$ under which the DHRP layer
-(Eqs.~\ref{eq:gates}--\ref{eq:blend}) produces weights identical to
-classical HRP applied to $\Sigma$.
+Fix a covariance matrix $\Sigma \in \mathbb{R}^{n\times n}$ for which
+classical HRP produces a unique single-linkage agglomerative tree
+$T^\star$ with $n$ leaves and a quasi-diagonal asset ordering, and let
+$w^{\text{HRP}}(\Sigma) \in \Delta^{n-1}$ be the resulting allocation.
+Suppose the DHRP layer is configured so that (i) the tree depth
+satisfies $2^L \geq n$, (ii) the asset-leaf assignment $A$ is one-hot,
+matching the HRP quasi-diagonal ordering, (iii) at every internal node
+the gate logits are aligned with the corresponding HRP split direction,
+(iv) the leaf prior $\beta$ matches the cumulative inverse-volatility
+budget that HRP's recursive bisection assigns to each leaf of
+$T^\star$, and (v) the inverse-volatility blend is disabled with
+$\alpha = 1$. Then in the limit $\tau_k \to 0$ for all internal nodes,
+the DHRP forward pass on $\Sigma$ converges to $w^{\text{HRP}}(\Sigma)$.
 \end{proposition}
 
-\noindent\textit{Proof sketch.} Hard-route gates concentrate on the HRP
-cluster split direction; soft-assignment $A$ with one-hot rows recovers
-leaf membership; $\alpha = 1$ disables the inverse-vol blend. Full
-proof in Appendix~\ref{app:proof}; an entropy-regularized
-optimal-transport interpretation of the soft assignment is given in
-Appendix~\ref{app:ot}.
+\noindent\textit{Proof sketch.} Under the listed assumptions, hard-
+route gates concentrate on the HRP cluster split direction at every
+node, the soft assignment $A$ with one-hot rows reproduces leaf
+membership, the leaf prior $\beta$ exactly matches the bisection
+budgets, and $\alpha = 1$ disables the inverse-vol blend. Full
+construction in Appendix~\ref{app:proof}.
 
-\subsection{LLM-DHRP: cross-modal fusion}
+This is a relaxation, not a universal-recovery result. The DHRP layer
+does not differentiate through agglomerative clustering itself: it
+learns an amortized mapping $(x_t, \Sigma_t) \mapsto w_t$ that admits
+the HRP allocation as a fixed point at the limit above. We treat
+``DHRP recovers classical HRP as $\tau \to 0$'' as informal shorthand
+for this conditional statement throughout the paper.
+
+A row-wise entropy-regularized interpretation of the soft assignment
+matrix (Appendix~\ref{app:ot}) connects the assignment to the Sinkhorn
+literature, although our implementation enforces only row-stochasticity
+rather than the full bi-stochastic Sinkhorn iteration.
+
+\subsection{LLM-DHRP: text-augmented allocation}
 \label{sec:llm_dhrp_arch}
 
-LLM-DHRP injects per-asset, time-varying text features
-$T_t \in \mathbb{R}^{n \times d_T}$ from financial news. Headlines for
-asset $a$ within a 90-day rolling window are encoded by FinBERT
-\citep{Huang2023} ($d_T = 768$), L2-normalized per asset, then
-aggregated as concatenated mean+max-pool to $\mathbb{R}^{2 d_T}$.
-A TextProjection MLP maps to $\mathbb{R}^f$, fused with $h_t$ via gated
-cross-attention:
+LLM-DHRP augments the price pathway with a single text summary vector
+per timestep, built from per-asset news headlines. For each asset $a$
+we collect headlines within a 90-day rolling window, encode each
+headline with FinBERT \citep{Huang2023} ($d_T = 768$), L2-normalize per
+asset, and aggregate to a per-asset vector via concatenated mean and
+max-pooling, producing $\bar T_t \in \mathbb{R}^{n \times 2 d_T}$. We
+then collapse the asset axis with a normalized mean to obtain a single
+timestep-level text summary $u_t \in \mathbb{R}^{2 d_T}$. A
+TextProjection MLP maps $u_t$ to $\mathbb{R}^f$, and a gated residual
+fuses it into the price pathway:
 \begin{equation}
 \hat h_t = h_t + g_{\text{text}} \cdot
-\mathrm{CrossAttn}(h_t, T_t^{\text{proj}}, T_t^{\text{proj}}),
+\mathrm{TextProj}(u_t),
 \quad g_{\text{text}} = \sigma(\theta_g - 1.0),
 \end{equation}
 with gate bias $-1.0$ initially suppressing text. Modality dropout
-(probability 0.1) randomly masks text during training. We use a two-
-phase warm-start: phase~1 freezes price-pathway parameters and trains
-text/fusion only; phase~2 unfreezes all with reduced learning rate
-(Appendix~\ref{app:hyperparams}).
+(probability 0.1) randomly masks the text branch during training. We
+use a two-phase warm-start: phase~1 freezes price-pathway parameters
+and trains text/fusion only; phase~2 unfreezes all with reduced
+learning rate (Appendix~\ref{app:hyperparams}).
+
+We deliberately use a global text summary rather than asset-token
+cross-attention. Per-asset headline coverage in our universes is
+sparse and skewed toward a few mega-cap names, and pilots with
+asset-token attention exhibited high seed-to-seed variance dominated by
+coverage gaps rather than text signal. The negative ablation in
+Section~\ref{sec:llmablation} should therefore be read as a
+``does global FinBERT summary help DHRP'' result, not as a verdict on
+all possible per-asset text architectures.
 
 
 \section{The DHRP-8 Benchmark}
@@ -480,31 +514,35 @@ LLM-DHRP & $0.239{\pm}0.119$ [0.712] & $0.474{\pm}0.005$ [0.872] & $0.738{\pm}0.
 \subsection{Factor regression alphas}
 \label{sec:results_alphas}
 
-In commodities, DHRP achieves Fama--French 3-factor annualized alpha of
-$16.1\%$ ($t{=}2.49$, $p{=}0.013$) and AQR cross-sectional
-Value/Momentum alpha of $20.7\%$ ($t{=}4.00$, $p{<}0.001$). LLM-DHRP
-also achieves significant FF3 alpha ($13.1\%$, $t{=}2.06$,
-$p{=}0.039$) but ranks below DHRP. Per-factor breakdown in
-Appendix~\ref{app:full_tables}.
+In commodities, DHRP achieves a Fama--French 3-factor annualized alpha
+of $6.3\%$ ($t=1.58$, not significant at the 5\% level), with the next-
+best classical baseline (MINVAR) at $7.3\%$ ($t=2.25$). LLM-DHRP attains
+a higher FF3 alpha at $9.0\%$ ($t=2.20$, significant at the 5\% level)
+despite a lower mean Sharpe, illustrating that text-augmented allocation
+can shift the return distribution along factor exposures even when it
+does not improve the headline Sharpe (Section~\ref{sec:llmablation}).
+We do not report AQR cross-sectional Value/Momentum alphas in the main
+body; the AQR series for the commodities universe is incomplete in our
+data window and the regression is omitted.
 
 % Auto-generated by scripts/generate_paper_tables.py
 \begin{table}[t]
-\caption{Annualized factor alphas with HAC Newey-West t-statistics in parentheses for the commodity universe. $^{\dagger}$\,$p<0.10$, $^{\ast}$\,$p<0.05$, $^{\ast\ast}$\,$p<0.01$. Fama-French 3-factor uses Mkt-RF, SMB, HML; AQR uses cross-sectional Value and Momentum factors from Asness, Moskowitz, and Pedersen (2013).}
+\caption{Annualized Fama--French 3-factor alphas with HAC Newey--West t-statistics in parentheses for the commodity universe. $^{\dagger}$\,$p<0.10$, $^{\ast}$\,$p<0.05$. Mkt-RF, SMB, HML factors. Only LLM-DHRP and MINVAR clear the 5\% threshold; DHRP's headline result is driven by sample Sharpe (PSR=0.999), not by factor alpha.}
 \label{tab:alphas}
 \centering
 \small
-\begin{tabular}{lcc}
+\begin{tabular}{lc}
 \toprule
-Method & FF3 $\alpha$ & AQR $\alpha$ \\
+Method & FF3 $\alpha$ \\
 \midrule
-EW & 1.8\% (0.42) & --- \\
-MV & -4.4\% (-0.41) & --- \\
-MINVAR & 7.3\% (2.25) & --- \\
-MAXDIV & 2.8\% (0.67) & --- \\
-RP & 1.2\% (0.30) & --- \\
-HRP & 4.6\% (1.18) & --- \\
-DHRP & 6.3\% (1.58) & --- \\
-LLM-DHRP & 9.0\% (2.20) & --- \\
+EW & 1.8\% (0.42) \\
+MV & -4.4\% (-0.41) \\
+MINVAR & 7.3\% (2.25)$^{\ast}$ \\
+MAXDIV & 2.8\% (0.67) \\
+RP & 1.2\% (0.30) \\
+HRP & 4.6\% (1.18) \\
+DHRP & 6.3\% (1.58) \\
+LLM-DHRP & 9.0\% (2.20)$^{\ast}$ \\
 \bottomrule
 \end{tabular}
 \end{table}
@@ -615,33 +653,26 @@ regime.
 \section{Conclusion}
 \label{sec:conclusion}
 
-DHRP, a differentiable extension of HRP that recovers classical HRP as
-$\tau \to 0$, achieves Sharpe $1.30 \pm 0.10$ in commodities (PSR
-$0.999$, FF3 $t{=}2.49$, AQR $t{=}4.00$) and $1.29 \pm 0.05$ in crypto
-(PSR $0.991$), beating classical HRP in 7 of 8 universes. We document
-an honest negative result: under multi-seed reporting, FinBERT-based
-LLM augmentation provides no statistical lift and regresses in
-commodities and DM. The DHRP-8 benchmark, code, multi-seed
-checkpoints, and Croissant 1.1 metadata are released to support
-reproducible portfolio research.
+DHRP is a differentiable, HRP-inspired allocator that reduces to a
+classical HRP allocation under explicit limit assumptions
+(Proposition~\ref{prop:recovery}). On DHRP-8, it achieves a Sharpe of
+$1.30 \pm 0.10$ in commodities (PSR $0.999$) and $1.29 \pm 0.05$ in
+crypto (PSR $0.991$), and beats classical HRP in six of eight universes
+(the two losses, sectors and factors, are within 0.03 Sharpe of HRP).
+We document an honest negative result: under multi-seed reporting and
+on the universes where text features are available (DM, EM,
+commodities), FinBERT-based LLM augmentation does not improve mean
+Sharpe and regresses in commodities and DM, even though its FF3 alpha
+in commodities is significant at the 5\% level. The DHRP-8 benchmark,
+code, multi-seed checkpoints, and Croissant 1.1 metadata are released
+to support reproducible portfolio research.
 
 
 \clearpage
 \bibliographystyle{plainnat}
 \bibliography{references}
 
-% NeurIPS 2026 mandatory paper checklist (auto-included by neurips_2026.sty
-% or via % =====================================================================
-% NeurIPS 2026 Paper Checklist (Mandatory)
-%
-% Answer each question with one of: [Yes], [No], [N/A], or a short
-% justification. The checklist does NOT count toward the 9-page limit.
-%
-% Reference: https://neurips.cc/public/guides/PaperChecklist
-%
-% IMPORTANT: re-verify every answer against the final paper text and
-% supplementary materials before submission. This file is a draft.
-% =====================================================================
+% NeurIPS 2026 mandatory paper checklist (does not count toward 9-page main limit).
 
 \section*{NeurIPS Paper Checklist}
 
@@ -726,103 +757,6 @@ reproducible portfolio research.
 \textbf{Answer:} \answerYes{}\\
 \textbf{Justification:} The paper studies LLM augmentation (LLM-DHRP) as a methodological component. Section~\ref{sec:llm_dhrp_arch} describes the architecture, including FinBERT \citep{Huang2023} as the embedding model, the cross-modal fusion mechanism, and the warm-start training protocol. Section~\ref{sec:llmablation} reports the negative result that LLM augmentation does not improve over the price-only DHRP under multi-seed reporting.
 \end{enumerate}
-). Does NOT count toward 9-page main limit.
-% =====================================================================
-% NeurIPS 2026 Paper Checklist (Mandatory)
-%
-% Answer each question with one of: [Yes], [No], [N/A], or a short
-% justification. The checklist does NOT count toward the 9-page limit.
-%
-% Reference: https://neurips.cc/public/guides/PaperChecklist
-%
-% IMPORTANT: re-verify every answer against the final paper text and
-% supplementary materials before submission. This file is a draft.
-% =====================================================================
-
-\section*{NeurIPS Paper Checklist}
-
-\begin{enumerate}
-\item {\bf Claims}\\
-\textbf{Question:} Do the main claims made in the abstract and introduction accurately reflect the paper's contributions and scope?\\
-\textbf{Answer:} \answerYes{}\\
-\textbf{Justification:} The abstract and Section~\ref{sec:intro} claim three contributions: (i) DHRP architecture with HRP recovery (Proposition~\ref{prop:recovery}), (ii) the 8-universe DHRP-8 benchmark with multi-seed PSR reporting, and (iii) honest negative LLM ablation. Each contribution is delivered in Sections~\ref{sec:method}, \ref{sec:benchmark}, and \ref{sec:llmablation} respectively.
-
-\item {\bf Limitations}\\
-\textbf{Question:} Does the paper discuss the limitations of the work performed by the authors?\\
-\textbf{Answer:} \answerYes{}\\
-\textbf{Justification:} Section~\ref{sec:limits} explicitly addresses (a) when DHRP wins vs.\ loses (commodities/crypto vs.\ equity-heavy universes), (b) failed hypotheses (LLM augmentation, deeper trees), (c) threats to validity (survivorship bias, backtest overfitting, single-period OOS), and (d) future work directions.
-
-\item {\bf Theory assumptions and proofs}\\
-\textbf{Question:} For each theoretical result, does the paper provide the full set of assumptions and a complete (and correct) proof?\\
-\textbf{Answer:} \answerYes{}\\
-\textbf{Justification:} Proposition~\ref{prop:recovery} (HRP recovery) is stated with explicit assumptions (unique HRP tree from agglomerative clustering) in Section~\ref{sec:dhrp_layer}, with a proof sketch in the section and the full proof in Appendix~\ref{app:proof}.
-
-\item {\bf Experimental result reproducibility}\\
-\textbf{Question:} Does the paper fully disclose all the information needed to reproduce the main experimental results of the paper to the extent that it affects the main claims and/or conclusions of the paper (regardless of whether the code and data are provided or not)?\\
-\textbf{Answer:} \answerYes{}\\
-\textbf{Justification:} Section~\ref{sec:protocol} describes the multi-seed protocol; Appendix~\ref{app:hyperparams} provides per-universe hyperparameters; Appendix~\ref{app:repro_notes} provides the compute budget. The data sources (Section~\ref{sec:universes}) are public. \texttt{REPRODUCIBILITY.md} in the supplementary materials contains a single-command \texttt{reproduce\_all.sh} script.
-
-\item {\bf Open access to data and code}\\
-\textbf{Question:} Does the paper provide open access to the data and code, with sufficient instructions to faithfully reproduce the main experimental results, as described in supplemental material?\\
-\textbf{Answer:} \answerYes{}\\
-\textbf{Justification:} Anonymous release at \url{https://anonymous.4open.science/r/DHRP-8-anonymized}. Includes pinned \texttt{requirements-frozen.txt}, single-command reproduction (\texttt{scripts/reproduce\_all.sh}), Croissant 1.1 metadata for the 8-universe benchmark (\texttt{data/croissant/dhrp-8universe.json}), and trained model checkpoints across 10 seeds.
-
-\item {\bf Experimental setting/details}\\
-\textbf{Question:} Does the paper specify all the training and test details (e.g., data splits, hyperparameters, how they were chosen, type of optimizer, etc.) necessary to understand the results?\\
-\textbf{Answer:} \answerYes{}\\
-\textbf{Justification:} Sections~\ref{sec:method}--\ref{sec:protocol} and Appendix~\ref{app:hyperparams} cover model architecture, multi-objective loss, AdamW optimizer with cosine annealing, learning rate $6 \times 10^{-4}$, weight decay, gradient clipping, batch size, and 10-seed protocol. Train/test splits are fixed by date (in-sample 2012--2020-06; OOS 2020-07--2026-04).
-
-\item {\bf Experiment statistical significance}\\
-\textbf{Question:} Does the paper report error bars suitably and correctly defined or other appropriate information about the statistical significance of the experiments?\\
-\textbf{Answer:} \answerYes{}\\
-\textbf{Justification:} All neural methods report mean$\pm$std over 10 random seeds. Significance is reported through (i) Probabilistic Sharpe Ratios \citep{Bailey2012PSR}, (ii) HAC Newey--West t-statistics \citep{NeweyWest1987}, (iii) Fama--French and AQR factor regression alphas, (iv) pairwise Sharpe-difference tests via stationary block bootstrap \citep{PolitisRomano1994} with Holm--Bonferroni correction, and (v) SPA \citep{Hansen2005} and MCS \citep{HansenLundeNason2011} multi-method tests.
-
-\item {\bf Experiments compute resources}\\
-\textbf{Question:} For each experiment, does the paper provide sufficient information on the computer resources (type of compute workers, memory, time of execution) needed to reproduce the experiments?\\
-\textbf{Answer:} \answerYes{}\\
-\textbf{Justification:} Appendix~\ref{app:repro_notes} reports total compute: $\sim 7$ GPU-hours on NVIDIA T4 (Google Colab) or $\sim 1.8$ GPU-hours on A100 for the full 10-seed multi-universe pipeline. Per-step breakdown is included.
-
-\item {\bf Code of ethics}\\
-\textbf{Question:} Does the research conducted in the paper conform, in every respect, with the NeurIPS Code of Ethics?\\
-\textbf{Answer:} \answerYes{}\\
-\textbf{Justification:} The work uses public market data, public news headlines under fair-use research exemption, and a publicly available pre-trained LLM (FinBERT, ProsusAI). No human subjects, no PII. The Croissant metadata documents survivorship bias and other dataset caveats per the NeurIPS RAI guidelines.
-
-\item {\bf Broader impacts}\\
-\textbf{Question:} Does the paper discuss both potential positive societal impacts and negative societal impacts of the work performed?\\
-\textbf{Answer:} \answerYes{}\\
-\textbf{Justification:} Section~\ref{sec:limits} discusses limitations (DHRP underperforms in equity-heavy universes; LLM augmentation does not help). Broader impacts are addressed in the Croissant RAI metadata (Appendix~\ref{app:croissant}): (positive) standardized benchmark for portfolio research; (negative caveat) financial models can affect trading decisions, and survivorship bias in static ETF universes may overstate historical performance for delisted assets.
-
-\item {\bf Safeguards}\\
-\textbf{Question:} Does the paper describe safeguards that have been put in place for responsible release of data or models with a high risk for misuse (e.g., pretrained language models, image generators, or scraped datasets)?\\
-\textbf{Answer:} \answerNA{}\\
-\textbf{Justification:} The released artifacts are public market price data, public news headlines, and trained portfolio allocation models on small ETF universes. None pose high risk for misuse beyond standard disclaimers about not using historical backtests as live trading advice.
-
-\item {\bf Licenses for existing assets}\\
-\textbf{Question:} Are the creators or original owners of assets (e.g., code, data, models), used in the paper, properly credited and are the license and terms of use explicitly mentioned and properly respected?\\
-\textbf{Answer:} \answerYes{}\\
-\textbf{Justification:} ETF prices via Yahoo Finance v8 API (public). Fama--French factors via Kenneth French's data library (public). AQR commodity factors via AQR Capital Management's research portal (public). FinBERT model: ProsusAI/finbert on HuggingFace (CC-BY-NC-4.0). All credited in Section~\ref{sec:universes} and Appendix~\ref{app:croissant}.
-
-\item {\bf New assets}\\
-\textbf{Question:} Are new assets introduced in the paper well documented and is the documentation provided alongside the assets?\\
-\textbf{Answer:} \answerYes{}\\
-\textbf{Justification:} The DHRP-8 benchmark dataset is documented via Croissant 1.1 metadata (\texttt{data/croissant/dhrp-8universe.json}, summarized in Appendix~\ref{app:croissant}) including license, schema, distribution files, train/test splits, and Responsible-AI annotations. Code is documented via \texttt{REPRODUCIBILITY.md} and inline docstrings.
-
-\item {\bf Crowdsourcing and research with human subjects}\\
-\textbf{Question:} For crowdsourcing experiments and research with human subjects, does the paper include the full text of instructions given to participants and screenshots, if applicable, as well as details about compensation (if any)?\\
-\textbf{Answer:} \answerNA{}\\
-\textbf{Justification:} No human subjects or crowdsourcing.
-
-\item {\bf Institutional review board (IRB) approvals or equivalent for research with human subjects}\\
-\textbf{Question:} Does the paper describe potential risks incurred by study participants, whether such risks were disclosed to the subjects, and whether Institutional Review Board (IRB) approvals (or an equivalent approval/review based on the requirements of your country or institution) were obtained?\\
-\textbf{Answer:} \answerNA{}\\
-\textbf{Justification:} No human subjects.
-
-\item {\bf Declaration of LLM usage}\\
-\textbf{Question:} Does the paper describe the usage of LLMs if it is an important, original, or non-standard component of the core methods in this research?\\
-\textbf{Answer:} \answerYes{}\\
-\textbf{Justification:} The paper studies LLM augmentation (LLM-DHRP) as a methodological component. Section~\ref{sec:llm_dhrp_arch} describes the architecture, including FinBERT \citep{Huang2023} as the embedding model, the cross-modal fusion mechanism, and the warm-start training protocol. Section~\ref{sec:llmablation} reports the negative result that LLM augmentation does not improve over the price-only DHRP under multi-seed reporting.
-\end{enumerate}
-
 
 \newpage
 \appendix
@@ -892,27 +826,34 @@ existential) and uses standard universal-approximation results for
 2-layer MLPs to encode the gate decision boundaries.
 \end{proof}
 
-\section{Optimal-Transport Interpretation of Soft Leaf Assignment}
+\section{Row-wise Entropy-Regularized View of the Soft Leaf Assignment}
 \label{app:ot}
 
-The DHRP soft leaf-assignment matrix admits an interpretation as an
-entropy-regularized optimal transport (OT) plan, connecting the
-architecture to the Sinkhorn literature \citep{Cuturi2013Sinkhorn}.
+The DHRP soft leaf-assignment matrix admits an interpretation as a
+row-wise entropy-regularized assignment, in the same family as
+Sinkhorn-style optimal transport \citep{Cuturi2013Sinkhorn} but with
+only the row marginals enforced.
 
-\begin{proposition}[Sinkhorn equivalence]
+\begin{proposition}[Row-wise OT relaxation]
 \label{prop:ot}
 Let $A \in \mathbb{R}^{n \times 2^L}$ denote the unnormalized
 leaf-assignment logits and $\bar A_{i,\ell} =
 \mathrm{softmax}(A_{i,:})_\ell$ the row-normalized assignment used by
 DHRP. Define a cost matrix $C_{i,\ell} = -A_{i,\ell}$ and a uniform
-asset marginal $\mu_i = 1/n$, with leaf marginal $\nu_\ell$ implied
-by $\bar A^\top \mu$. Then $\bar A$ is the unique solution to the
-entropy-regularized OT problem
+asset marginal $\mu_i = 1/n$. Then $\bar A$ is the unique solution to
+the entropy-regularized assignment problem
 \[
-\min_{\Pi \in \Pi(\mu, \cdot)} \langle \Pi, C \rangle - H(\Pi),
-\quad H(\Pi) = -\sum_{i,\ell} \Pi_{i,\ell} \log \Pi_{i,\ell},
+\min_{\Pi}\ \langle \Pi, C \rangle + \sum_{i,\ell} \Pi_{i,\ell}
+\log \Pi_{i,\ell}, \quad \text{subject to } \sum_\ell \Pi_{i,\ell}
+= \mu_i\ \forall i,
 \]
-restricted to row-stochastic plans with marginal $\mu$.
+i.e.\ the row-stochastic relaxation of entropy-regularized optimal
+transport. The column marginal $\bar A^\top \mu$ is left
+unconstrained; this is \emph{not} a full Sinkhorn solution, which
+would additionally enforce a fixed column marginal $\nu$ via iterative
+bi-stochastic normalization. Calling the construction ``Sinkhorn
+equivalence'' would overstate the result; we describe it as a
+row-stochastic relaxation throughout.
 \end{proposition}
 
 \begin{proof}[Proof sketch]
