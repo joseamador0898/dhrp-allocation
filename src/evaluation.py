@@ -1,3 +1,557 @@
+"""src.evaluation (consolidated). Original layout: ['backtest.py', 'factor_analysis.py', 'statistics.py']"""
+
+# ====================================================================
+# Module: backtest.py
+# ====================================================================
+"""Rolling-window backtest engine supporting all portfolio methods.
+
+Supports:
+- Classical baselines: EW, MINVAR, MV, HRP, RP, MAXDIV
+- DHRP (differentiable HRP)
+- LLM-DHRP (LLM-enhanced differentiable HRP)
+- Deep baselines: MLP, Transformer, PPO
+"""
+
+import numpy as np
+import pandas as pd
+
+from src.models import (
+    equal_weight, min_variance, mean_variance, hrp_allocation,
+    risk_parity, max_diversification, ledoit_wolf_cov,
+)
+from src.training import dhrp_weights
+from src.data import get_universe_config
+
+# Default backtest parameters
+TRAIN_DAYS = 252
+TEST_DAYS = 21
+STEP_DAYS = 21
+MIN_COVERAGE = 0.95
+PURGE_DAYS = 5  # gap between train and test to prevent look-ahead
+METHODS = [
+    "EW", "MINVAR", "MV", "HRP", "RP", "MAXDIV",
+    "DHRP", "LLM_DHRP", "MLP", "Transformer", "PPO", "DFL",
+]
+
+
+def rolling_backtest(
+    prices,
+    is_em=False,
+    dhrp_model=None,
+    llm_dhrp_model=None,
+    mlp_model=None,
+    transformer_model=None,
+    ppo_model=None,
+    dfl_model=None,
+    text_features=None,
+    macro_features=None,
+    methods=None,
+    train_days=TRAIN_DAYS,
+    test_days=TEST_DAYS,
+    step_days=STEP_DAYS,
+    min_coverage=MIN_COVERAGE,
+    transaction_cost_bps=0,
+    volume=None,
+    purge_days=PURGE_DAYS,
+    return_weights=False,
+    oos_start=None,
+    universe=None,
+    weight_ema=0.0,
+):
+    """Run rolling-window backtest over all methods.
+
+    Args:
+        prices: DataFrame of adjusted close prices
+        is_em: whether this is an emerging markets universe
+        dhrp_model: trained DHRPLayer, or None
+        llm_dhrp_model: trained LLMDHRPLayer, or None
+        mlp_model: trained MLPWithCovPolicy, or None
+        transformer_model: trained TransformerPortfolioPolicy, or None
+        ppo_model: trained PPOPortfolioAgent, or None
+        text_features: dict with 'finbert' and/or 'sentiment' arrays, or None
+        macro_features: DataFrame of macro features, or None
+        methods: list of method names to backtest
+        train_days: rolling training window size
+        test_days: forward test window size
+        step_days: step between rebalance dates
+        min_coverage: minimum data coverage required
+        transaction_cost_bps: transaction costs in basis points
+        volume: DataFrame of daily volume, or None
+        purge_days: gap between train and test windows
+        return_weights: if True, also return weight history for turnover analysis
+        oos_start: out-of-sample start date (str or Timestamp). If provided, only
+                   backtest from this date onward (for neural methods trained on prior data).
+        weight_ema: EMA smoothing factor for neural method weights (0=no smoothing,
+                    0.3=blend 30% new + 70% old). Reduces turnover. Only applies to
+                    DHRP, LLM_DHRP, MLP, Transformer, PPO.
+    Returns:
+        DataFrame with columns [method, date, return]
+        If return_weights=True, returns (results_df, weights_history)
+        where weights_history is a list of dicts with [method, date, weights]
+    """
+    if methods is None:
+        # Only include methods that have models provided
+        methods = ["EW", "MINVAR", "MV", "HRP", "RP", "MAXDIV"]
+        if dhrp_model is not None:
+            methods.append("DHRP")
+        if llm_dhrp_model is not None:
+            methods.append("LLM_DHRP")
+        if mlp_model is not None:
+            methods.append("MLP")
+        if transformer_model is not None:
+            methods.append("Transformer")
+        if ppo_model is not None:
+            methods.append("PPO")
+        if dfl_model is not None:
+            methods.append("DFL")
+
+    # Per-universe overrides: lookback, weekly rebalance, covariance shrinkage.
+    # When `universe` is None the function's own defaults / is_em branch are
+    # used, so existing callers behave identically.
+    if universe is not None:
+        cfg = get_universe_config(universe)
+        train_days = cfg.get("lookback_window", train_days)
+        step_days = cfg.get("rebalance_freq", step_days)
+        cov_shrinkage = cfg.get("cov_shrinkage", 0.001 if is_em else 1e-6)
+    else:
+        cov_shrinkage = 0.001 if is_em else 1e-6
+
+    # dropna(how="all") keeps the full 10-year span even if one asset has a
+    # late inception (e.g. CPER in Commodities). Per-asset NaNs are zeroed by
+    # the .fillna(0) on the train/test slices below.
+    rets = prices.pct_change().dropna(how="all")
+    results = []
+    weights_history = []
+    prev_weights = {}
+    rebalance_idx = 0
+
+    # Determine OOS start index
+    oos_idx = train_days
+    if oos_start is not None:
+        oos_date = pd.Timestamp(oos_start)
+        oos_candidates = rets.index[rets.index >= oos_date]
+        if len(oos_candidates) > 0:
+            oos_idx = max(train_days, rets.index.get_loc(oos_candidates[0]))
+
+    for t in range(train_days, len(rets), step_days):
+        if t < oos_idx:
+            rebalance_idx += 1
+            continue
+        # Apply purge gap: train ends purge_days before test starts
+        train_end = t - purge_days if purge_days > 0 else t
+        if train_end <= train_days:
+            rebalance_idx += 1
+            continue
+        train = rets.iloc[train_end - train_days : train_end].fillna(0)
+        if train.isna().mean().mean() > (1 - min_coverage):
+            rebalance_idx += 1
+            continue
+        mu = train.mean().values * 252
+        # Ledoit-Wolf shrinkage for better-conditioned covariance estimation
+        try:
+            cov = ledoit_wolf_cov(train)
+        except Exception:
+            cov = train.cov().values * 252
+        cov = cov + np.eye(train.shape[1]) * cov_shrinkage
+        # Record only until the next rebalance fires, so each OOS date
+        # appears exactly once per method. Prevents duplicate-date
+        # inflation of Sharpe / annualized return / cumulative plots
+        # when step_days < test_days (e.g. Commodities: step=5, test=21).
+        # When step_days >= test_days this is a no-op (preserves legacy
+        # behavior for DM and EM).
+        record_days = min(test_days, step_days)
+        test = rets.iloc[t : t + record_days].fillna(0)
+        if test.empty:
+            rebalance_idx += 1
+            continue
+
+        # Volume window for this rebalance
+        vol_window = None
+        if volume is not None and not volume.empty:
+            vol_window = volume.iloc[max(0, train_end - train_days) : train_end]
+
+        for m in methods:
+            try:
+                w = _compute_weights(
+                    m, mu, cov, train, is_em,
+                    dhrp_model=dhrp_model,
+                    llm_dhrp_model=llm_dhrp_model,
+                    mlp_model=mlp_model,
+                    transformer_model=transformer_model,
+                    ppo_model=ppo_model,
+                    dfl_model=dfl_model,
+                    text_features=text_features,
+                    macro_features=macro_features,
+                    rebalance_idx=rebalance_idx,
+                    rebalance_date=rets.index[t],
+                    volume=vol_window,
+                )
+                if w is None:
+                    continue
+
+                # EMA weight smoothing for neural methods to reduce turnover
+                neural_methods = {"DHRP", "LLM_DHRP", "MLP", "Transformer", "PPO"}
+                if weight_ema > 0 and m in neural_methods and m in prev_weights:
+                    w = (1 - weight_ema) * w + weight_ema * prev_weights[m]
+                    w = w / w.sum()  # re-normalize
+
+                # Record weights for turnover analysis
+                if return_weights:
+                    weights_history.append({
+                        "method": m,
+                        "date": rets.index[t],
+                        "weights": w.tolist(),
+                    })
+
+                # Transaction cost adjustment
+                tc_drag = 0.0
+                if transaction_cost_bps > 0 and m in prev_weights:
+                    turnover = np.sum(np.abs(w - prev_weights[m]))
+                    tc_drag = turnover * transaction_cost_bps / 10000
+                prev_weights[m] = w.copy()
+
+                daily_rs = (test.values @ w).flatten()
+                n_days = len(daily_rs)
+                for i, r in enumerate(daily_rs):
+                    # Amortize tc drag over the days actually recorded,
+                    # not the full test_days (which may exceed step_days).
+                    adj_r = float(r) - (tc_drag / max(n_days, 1) if i == 0 else 0)
+                    results.append({"method": m, "date": test.index[i], "return": adj_r})
+            except Exception:
+                pass
+
+        rebalance_idx += 1
+
+    results_df = pd.DataFrame(results)
+    if return_weights:
+        return results_df, weights_history
+    return results_df
+
+
+def multiseed_backtest(prices, models_by_seed, is_em=False, methods=None,
+                       rf=0.03, **kwargs):
+    """Run backtests across multiple seeds and aggregate results.
+
+    Args:
+        prices: DataFrame of adjusted close prices
+        models_by_seed: list of dicts, each mapping model_type to trained model
+                        e.g. [{"dhrp": model_s0, "mlp": model_s0}, ...]
+        is_em: emerging markets flag
+        methods: list of method names
+        rf: risk-free rate
+        **kwargs: additional args passed to rolling_backtest
+    Returns:
+        DataFrame with columns [Method, Sharpe_mean, Sharpe_std, Sortino_mean, ...]
+    """
+    from .statistics import compute_stats
+
+    all_stats = []
+    for seed_models in models_by_seed:
+        res = rolling_backtest(
+            prices, is_em=is_em,
+            dhrp_model=seed_models.get("dhrp"),
+            llm_dhrp_model=seed_models.get("llm_dhrp"),
+            mlp_model=seed_models.get("mlp"),
+            transformer_model=seed_models.get("transformer"),
+            ppo_model=seed_models.get("ppo"),
+            methods=methods,
+            **kwargs,
+        )
+        stats = compute_stats(res, rf=rf)
+        all_stats.append(stats)
+
+    if not all_stats:
+        return pd.DataFrame()
+
+    # Aggregate across seeds
+    combined = pd.concat(all_stats, ignore_index=True)
+    metric_cols = [c for c in combined.columns if c != "Method"]
+    agg = combined.groupby("Method")[metric_cols].agg(["mean", "std"])
+    agg.columns = [f"{c}_{s}" for c, s in agg.columns]
+    return agg.reset_index()
+
+
+def _compute_weights(
+    method, mu, cov, train_rets, is_em,
+    dhrp_model=None, llm_dhrp_model=None,
+    mlp_model=None, transformer_model=None, ppo_model=None,
+    dfl_model=None,
+    text_features=None, macro_features=None,
+    rebalance_idx=0, rebalance_date=None,
+    volume=None,
+):
+    """Compute portfolio weights for a given method."""
+    if method == "EW":
+        return equal_weight(mu, cov)
+    elif method == "MINVAR":
+        return min_variance(mu, cov, is_em)
+    elif method == "MV":
+        return mean_variance(mu, cov, is_em)
+    elif method == "HRP":
+        return hrp_allocation(cov)
+    elif method == "RP":
+        return risk_parity(cov)
+    elif method == "MAXDIV":
+        return max_diversification(mu, cov)
+    elif method == "DHRP" and dhrp_model is not None:
+        return dhrp_weights(dhrp_model, train_rets, is_em, volume=volume)
+    elif method == "LLM_DHRP" and llm_dhrp_model is not None:
+        return _llm_dhrp_weights(
+            llm_dhrp_model, train_rets, is_em,
+            text_features, macro_features,
+            rebalance_idx, rebalance_date,
+            volume=volume,
+        )
+    elif method == "MLP" and mlp_model is not None:
+        return dhrp_weights(mlp_model, train_rets, is_em, volume=volume)
+    elif method == "Transformer" and transformer_model is not None:
+        return dhrp_weights(transformer_model, train_rets, is_em, volume=volume)
+    elif method == "PPO" and ppo_model is not None:
+        return dhrp_weights(ppo_model, train_rets, is_em, volume=volume)
+    elif method == "DFL" and dfl_model is not None:
+        return dhrp_weights(dfl_model, train_rets, is_em, volume=volume)
+    return None
+
+
+def _llm_dhrp_weights(
+    model, rets, is_em,
+    text_features, macro_features,
+    rebalance_idx, rebalance_date,
+    volume=None,
+):
+    """Compute LLM-DHRP portfolio weights."""
+    import torch
+    from ..data.feature_engineering import make_features
+
+    try:
+        device = next(model.parameters()).device
+        cov = (rets.cov().values * 252).astype(np.float32)
+        if is_em:
+            cov += np.eye(cov.shape[0]) * 0.01
+        feat = make_features(rets, model.feature_dim, is_em, volume=volume).astype(np.float32)
+
+        text_emb = None
+        if text_features is not None and model.use_text:
+            fb = text_features.get("finbert") if isinstance(text_features, dict) else None
+            if fb is not None:
+                emb = None
+                # Date-keyed PIT lookup: dict[Timestamp, (n_assets, 768)].
+                # Use the most recent prior date to enforce point-in-time.
+                if isinstance(fb, dict):
+                    if rebalance_date is not None:
+                        ts = pd.Timestamp(rebalance_date)
+                        prior = [k for k in fb.keys() if pd.Timestamp(k) <= ts]
+                        if prior:
+                            emb = fb[max(prior)]
+                # Legacy positional ndarray: (n_rebalance, n_assets, 768).
+                elif rebalance_idx < len(fb):
+                    emb = fb[rebalance_idx]
+                if emb is not None:
+                    emb = np.asarray(emb)
+                    if emb.ndim == 2:
+                        # Match training-time aggregation: L2-norm + [mean,max] concat
+                        # Avoids the anisotropy collapse from naive mean(axis=0)
+                        from ..data.llm_features import aggregate_text_per_timestep
+                        emb = aggregate_text_per_timestep(
+                            emb[None, ...], method="norm_mean_max_concat"
+                        )[0]
+                    text_emb = torch.from_numpy(emb.astype(np.float32)).to(device)
+
+        macro_feat = None
+        if macro_features is not None and model.use_macro and rebalance_date is not None:
+            from ..data.fred_loader import get_macro_vector
+            macro_feat = get_macro_vector(macro_features, rebalance_date)
+            macro_feat = torch.from_numpy(macro_feat).to(device)
+
+        with torch.no_grad():
+            w = model(
+                torch.from_numpy(np.nan_to_num(feat)).to(device),
+                torch.from_numpy(np.nan_to_num(cov)).to(device),
+                text_emb=text_emb,
+                macro_feat=macro_feat,
+            ).cpu().numpy()
+
+        w = np.nan_to_num(np.clip(w, 0, 1))
+        return w / w.sum() if w.sum() > 0 else np.ones(len(w)) / len(w)
+    except Exception as e:
+        import warnings
+        warnings.warn(f"_llm_dhrp_weights failed: {e}")
+        return np.ones(rets.shape[1]) / rets.shape[1]
+
+# ====================================================================
+# Module: factor_analysis.py
+# ====================================================================
+import os
+
+import numpy as np
+import pandas as pd
+from statsmodels.regression.linear_model import OLS
+from statsmodels.tools.tools import add_constant
+
+CACHE_DIR = os.path.join(os.path.dirname(__file__), "..", "..", "data", "cache")
+
+
+def load_ff5_factors(start, end):
+    """Load Fama-French 5 factors + Momentum from Ken French's data library.
+
+    Returns DataFrame with columns: Mkt-RF, SMB, HML, RMW, CMA, Mom, RF
+    """
+    import pandas_datareader.data as pdr
+
+    os.makedirs(CACHE_DIR, exist_ok=True)
+    cp = os.path.join(CACHE_DIR, f"FF5Mom_{start}_{end}.csv")
+    if os.path.exists(cp):
+        ff = pd.read_csv(cp, index_col=0, parse_dates=True)
+        print(f"  FF5+Mom factors: {ff.shape[0]} days (cached)")
+        return ff
+
+    # FF5 daily factors
+    try:
+        ff5 = pdr.DataReader("F-F_Research_Data_5_Factors_2x3_daily", "famafrench", start, end)[0] / 100
+    except Exception:
+        ff5 = pdr.DataReader("F-F_Research_Data_Factors_daily", "famafrench", start, end)[0] / 100
+
+    # Momentum factor
+    try:
+        mom = pdr.DataReader("F-F_Momentum_Factor_daily", "famafrench", start, end)[0] / 100
+        mom.columns = ["Mom"]
+    except Exception:
+        mom = pd.DataFrame(index=ff5.index, columns=["Mom"], data=0.0)
+
+    ff = pd.concat([ff5, mom], axis=1, join="inner")
+    ff.to_csv(cp)
+    print(f"  FF5+Mom factors: {ff.shape[0]} days")
+    return ff
+
+
+def load_aqr_commodity_factors(start, end):
+    """Load AQR Value and Momentum Everywhere commodity factors (monthly).
+
+    Returns DataFrame with columns: VAL_CM, MOM_CM
+    Source: Asness, Moskowitz, Pedersen (2013), updated by AQR.
+    """
+    os.makedirs(CACHE_DIR, exist_ok=True)
+    cp = os.path.join(CACHE_DIR, f"AQR_CommodityFactors_{start}_{end}.csv")
+    if os.path.exists(cp):
+        df = pd.read_csv(cp, index_col=0, parse_dates=True)
+        print(f"  AQR Commodity factors: {df.shape[0]} months (cached)")
+        return df
+
+    url = (
+        "https://images.aqr.com/-/media/AQR/Documents/Insights/"
+        "Data-Sets/Value-and-Momentum-Everywhere-Factors-Monthly.xlsx"
+    )
+    raw = pd.read_excel(url, sheet_name="VME Factors", header=None)
+
+    # Row 21 has column names, data starts at row 22
+    headers = raw.iloc[21].tolist()
+    data = raw.iloc[22:].copy()
+    data.columns = headers
+    data = data.rename(columns={"DATE": "date"})
+    data["date"] = pd.to_datetime(data["date"])
+    data = data.set_index("date")
+
+    # Extract commodity value and momentum columns
+    cm_cols = {"VALLS_VME_COM": "VAL_CM", "MOMLS_VME_COM": "MOM_CM"}
+    df = data[[c for c in cm_cols if c in data.columns]].rename(columns=cm_cols)
+    df = df.apply(pd.to_numeric, errors="coerce").dropna()
+    df = df.loc[start:end]
+    df.to_csv(cp)
+    print(f"  AQR Commodity factors: {df.shape[0]} months")
+    return df
+
+
+def factor_analysis(results, ff, methods=None):
+    """Run Fama-French factor regressions for each method.
+
+    Automatically uses FF5+Mom if available, falls back to FF3.
+    """
+    if methods is None:
+        methods = sorted(results["method"].unique())
+
+    # Determine available factors
+    available = ff.columns.tolist()
+    core_factors = ["Mkt-RF", "SMB", "HML"]
+    extra_factors = [f for f in ["RMW", "CMA", "Mom"] if f in available]
+    all_factors = core_factors + extra_factors
+    factor_cols = [f for f in all_factors if f in available]
+    n_factors = len(factor_cols)
+
+    stats = []
+    for m in methods:
+        ser = results[results["method"] == m].set_index("date")["return"]
+        ser.index = pd.to_datetime(ser.index)
+        merged = pd.concat([ser.rename("ret"), ff], axis=1, join="inner").dropna()
+        if len(merged) < 100:
+            continue
+
+        X = merged[factor_cols].values
+        y = merged["ret"].values
+        mod = OLS(y, add_constant(X)).fit(cov_type="HAC", cov_kwds={"maxlags": 12})
+
+        row = {
+            "Method": m,
+            "Alpha_ann": mod.params[0] * 252,
+            "Alpha_t": mod.tvalues[0],
+            "Alpha_p": mod.pvalues[0],
+            "R2_adj": mod.rsquared_adj,
+        }
+        for i, f in enumerate(factor_cols):
+            row[f"Beta_{f}"] = mod.params[i + 1]
+            row[f"t_{f}"] = mod.tvalues[i + 1]
+
+        stats.append(row)
+    return pd.DataFrame(stats)
+
+
+def commodity_factor_analysis(results, aqr_factors, methods=None):
+    """Run commodity-specific factor regressions using AQR Value & Momentum.
+
+    AQR factors are monthly; daily returns are aggregated to monthly before
+    regression. Factors: VAL_CM (commodity value), MOM_CM (commodity momentum).
+    """
+    if methods is None:
+        methods = sorted(results["method"].unique())
+
+    factor_cols = [c for c in ["VAL_CM", "MOM_CM"] if c in aqr_factors.columns]
+    if not factor_cols:
+        raise ValueError("AQR commodity factors not found")
+
+    stats = []
+    for m in methods:
+        ser = results[results["method"] == m].set_index("date")["return"]
+        ser.index = pd.to_datetime(ser.index)
+        # Aggregate daily returns to monthly
+        monthly = (1 + ser).resample("ME").prod() - 1
+        merged = pd.concat(
+            [monthly.rename("ret"), aqr_factors[factor_cols]], axis=1, join="inner"
+        ).dropna()
+        if len(merged) < 24:
+            continue
+
+        X = merged[factor_cols].values
+        y = merged["ret"].values
+        mod = OLS(y, add_constant(X)).fit(
+            cov_type="HAC", cov_kwds={"maxlags": 4}
+        )
+
+        row = {
+            "Method": m,
+            "Alpha_ann": mod.params[0] * 12,
+            "Alpha_t": mod.tvalues[0],
+            "Alpha_p": mod.pvalues[0],
+            "R2_adj": mod.rsquared_adj,
+        }
+        for i, f in enumerate(factor_cols):
+            row[f"Beta_{f}"] = mod.params[i + 1]
+            row[f"t_{f}"] = mod.tvalues[i + 1]
+
+        stats.append(row)
+    return pd.DataFrame(stats)
+
+# ====================================================================
+# Module: statistics.py
+# ====================================================================
 import time
 
 import numpy as np
@@ -789,3 +1343,4 @@ def benchmark_efficiency(models_dict, n_assets=5, feature_dim=48, n_runs=100):
 
         rows.append({"Method": name, "Params": n_params, "Inference_ms": elapsed})
     return pd.DataFrame(rows)
+

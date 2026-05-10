@@ -1,15 +1,20 @@
+"""src.training (consolidated). Original layout: ['trainer.py']"""
+
+# ====================================================================
+# Module: trainer.py
+# ====================================================================
 """Training loops for DHRP, LLM-DHRP, and deep baseline models."""
 
 import numpy as np
 import torch
 import torch.optim as optim
 
-from ..models.dhrp_layer import DHRPLayer
-from ..models.llm_dhrp_layer import LLMDHRPLayer
-from ..models.loss_functions import dhrp_loss
-from ..data.feature_engineering import build_dataset, make_features, DEFAULT_FDIM
-from ..data.universe_config import get_universe_config
-from ..data.llm_features import aggregate_text_per_timestep
+from src.models import DHRPLayer
+from src.models import LLMDHRPLayer
+from src.models import dhrp_loss
+from src.data import build_dataset, make_features, DEFAULT_FDIM
+from src.data import get_universe_config
+from src.data import aggregate_text_per_timestep
 
 
 def _set_seed(seed):
@@ -559,3 +564,4 @@ def dhrp_weights(model, rets, is_em=False, volume=None):
         import warnings
         warnings.warn(f"dhrp_weights failed for {type(model).__name__}: {e}")
         return np.ones(rets.shape[1]) / rets.shape[1]
+

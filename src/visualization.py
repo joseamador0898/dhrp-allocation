@@ -1,3 +1,8 @@
+"""src.visualization (consolidated). Original layout: ['plots.py']"""
+
+# ====================================================================
+# Module: plots.py
+# ====================================================================
 """Plotting utilities for paper figures (NeurIPS-compatible)."""
 
 import os
@@ -308,3 +313,4 @@ def plot_pairwise_dm_heatmap(dm_df, output_dir="results/figures"):
     plt.tight_layout()
     plt.savefig(f"{output_dir}/pairwise_dm_heatmap.png", dpi=300, bbox_inches="tight")
     plt.close()
+

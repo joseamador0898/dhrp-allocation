@@ -30,7 +30,32 @@ else
     echo '>>> Dependencies already installed.'
 fi
 
-# 3. Make sure result directories exist
+# 3. Smoke test: verify all core modules import and forward-pass works
+echo '>>> Running smoke test...'
+python -c "
+import torch, numpy as np
+from src.models import DHRPLayer, LLMDHRPLayer, MLPWithCovPolicy, equal_weight, hrp_allocation, risk_parity
+from src.evaluation import compute_sharpe
+from src.data import build_dataset
+from src.training import train_dhrp
+
+m = DHRPLayer(n_assets=5, feature_dim=48, hidden_dim=64)
+w = m(torch.randn(48), torch.eye(5) * 0.04)
+assert w.shape == (5,) and abs(w.sum().item() - 1.0) < 1e-4
+print(f'  DHRPLayer OK ({sum(p.numel() for p in m.parameters())} params)')
+m2 = LLMDHRPLayer(n_assets=5, feature_dim=48, text_dim=768, use_text=True, use_macro=True, macro_dim=8)
+w = m2(torch.randn(48), torch.eye(5) * 0.04, text_emb=torch.randn(768), macro_feat=torch.randn(8))
+assert w.shape == (5,)
+print(f'  LLMDHRPLayer OK ({sum(p.numel() for p in m2.parameters())} params)')
+mu, cov = np.array([0.1, 0.08, 0.05, 0.03, 0.02]), np.eye(5) * 0.04
+assert all(abs(fn(mu, cov).sum() - 1.0) < 1e-6 if fn.__name__ == 'equal_weight' else abs(fn(cov).sum() - 1.0) < 1e-6 for fn in (equal_weight,))
+assert abs(hrp_allocation(cov).sum() - 1.0) < 1e-6 and abs(risk_parity(cov).sum() - 1.0) < 1e-6
+print('  Baselines OK')
+print(f'  Sharpe OK ({compute_sharpe(np.random.randn(252) * 0.01 + 3e-4):.3f})')
+print('  All imports + forward passes OK')
+"
+
+# 4. Make sure result directories exist
 mkdir -p results/figures results/models results/features results/full data/croissant
 
 # 4. Convert notebook to executable script and run end-to-end

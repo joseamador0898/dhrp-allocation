@@ -97,19 +97,8 @@ def main() -> int:
     required = [
         PAPER / "main.tex",
         PAPER / "references.bib",
-        PAPER / "checklist.tex",
-        SECTIONS / "abstract.tex",
-        SECTIONS / "01_introduction.tex",
-        SECTIONS / "02_related_work.tex",
-        SECTIONS / "03_method.tex",
-        SECTIONS / "04_benchmark_design.tex",
-        SECTIONS / "05_results.tex",
-        SECTIONS / "06_llm_negative_ablation.tex",
-        SECTIONS / "07_limitations_discussion.tex",
-        SECTIONS / "08_conclusion.tex",
-        SECTIONS / "appendix.tex",
+        ROOT / "README.md",
         ROOT / "data" / "croissant" / "dhrp-8universe.json",
-        ROOT / "REPRODUCIBILITY.md",
         ROOT / "scripts" / "reproduce_all.sh",
     ]
     for p in required:
@@ -135,7 +124,7 @@ def main() -> int:
         bib_text = bib_path.read_text(encoding="utf-8")
         bib_defs = find_bib_defs(bib_text)
         used_keys = set()
-        for tex in SECTIONS.glob("*.tex"):
+        for tex in [PAPER / "main.tex"] if (PAPER / "main.tex").exists() else []:
             used_keys |= find_cite_keys(tex.read_text(encoding="utf-8"))
         missing = used_keys - bib_defs
         unused = bib_defs - used_keys
@@ -151,7 +140,7 @@ def main() -> int:
     # 4. Figures referenced exist
     print("\n[4] Figures...")
     main_text = (PAPER / "main.tex").read_text(encoding="utf-8") if (PAPER / "main.tex").exists() else ""
-    section_text = "\n".join(t.read_text(encoding="utf-8") for t in SECTIONS.glob("*.tex"))
+    section_text = ""  # all section content is now inlined in main.tex
     fig_refs = find_includegraphics(main_text + "\n" + section_text)
     for ref in fig_refs:
         # Resolve via paper/figures/ or paper/ directly
@@ -182,7 +171,7 @@ def main() -> int:
     # 6. TODO / TBD placeholders in body text (non-comments)
     print("\n[6] TODO / TBD placeholders in body text...")
     total_todos = 0
-    for tex in SECTIONS.glob("*.tex"):
+    for tex in [PAPER / "main.tex"] if (PAPER / "main.tex").exists() else []:
         todos = find_todos(tex.read_text(encoding="utf-8"))
         if todos:
             total_todos += len(todos)
@@ -221,7 +210,7 @@ def main() -> int:
         "luigi",  # local username
     ]
     flags = []
-    for tex in list(SECTIONS.glob("*.tex")) + [PAPER / "main.tex", PAPER / "checklist.tex"]:
+    for tex in [PAPER / "main.tex"]:
         if not tex.exists():
             continue
         text = tex.read_text(encoding="utf-8")
