@@ -545,10 +545,15 @@ def _llm_dhrp_loss(model, xb, Sb, rb, hrp_w, text_embs=None, macro_feats=None,
     return loss
 
 
-def dhrp_weights(model, rets, is_em=False, volume=None):
+def dhrp_weights(model, rets, is_em=False, volume=None, fallback_on_error=False):
     """Compute portfolio weights from a trained DHRP model."""
     try:
         device = next(model.parameters()).device
+        n_assets = rets.shape[1]
+        if hasattr(model, "n_assets") and model.n_assets != n_assets:
+            raise ValueError(
+                f"{type(model).__name__} expects {model.n_assets} assets, got {n_assets}"
+            )
         cov = (rets.cov().values * 252).astype(np.float32)
         if is_em:
             cov += np.eye(cov.shape[0]) * 0.01
@@ -559,9 +564,15 @@ def dhrp_weights(model, rets, is_em=False, volume=None):
                 torch.from_numpy(np.nan_to_num(cov)).to(device),
             ).cpu().numpy()
         w = np.nan_to_num(np.clip(w, 0, 1))
-        return w / w.sum() if w.sum() > 0 else np.ones(len(w)) / len(w)
+        if w.shape[0] != n_assets:
+            raise ValueError(f"{type(model).__name__} returned {w.shape[0]} weights for {n_assets} assets")
+        if w.sum() <= 0:
+            raise ValueError(f"{type(model).__name__} returned non-positive weight sum")
+        return w / w.sum()
     except Exception as e:
-        import warnings
-        warnings.warn(f"dhrp_weights failed for {type(model).__name__}: {e}")
-        return np.ones(rets.shape[1]) / rets.shape[1]
+        if fallback_on_error:
+            import warnings
+            warnings.warn(f"dhrp_weights failed for {type(model).__name__}: {e}")
+            return np.ones(rets.shape[1]) / rets.shape[1]
+        raise
 

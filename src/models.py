@@ -64,26 +64,55 @@ def _cov_to_corr(cov):
     return np.clip(corr, -1, 1)
 
 
-def hrp_allocation(cov):
+def hrp_allocation(cov, linkage_method="single"):
+    """Classical long-only HRP allocation with inverse-variance bisection."""
+    cov = np.asarray(cov, dtype=float)
+    if cov.ndim != 2 or cov.shape[0] != cov.shape[1]:
+        raise ValueError(f"cov must be a square matrix; got {cov.shape}")
+    n = cov.shape[0]
+    if n == 1:
+        return np.ones(1)
+
+    eps = 1e-12
+    cov = (cov + cov.T) / 2.0
+    cov = cov + np.eye(n) * eps
     corr = _cov_to_corr(cov)
-    dist = np.sqrt(np.clip(0.5 * (1 - corr), 0, 1))
-    np.fill_diagonal(dist, 0)
-    order = leaves_list(linkage(squareform(dist, checks=False), method="ward"))
+    dist = np.sqrt(np.clip(0.5 * (1.0 - corr), 0.0, 1.0))
+    np.fill_diagonal(dist, 0.0)
+    order = list(leaves_list(linkage(squareform(dist, checks=False), method=linkage_method)))
 
-    def _bisect(ids):
-        if len(ids) == 1:
-            return {ids[0]: 1.0}
-        mid = len(ids) // 2
-        left, right = ids[:mid], ids[mid:]
-        vl = np.sqrt(max(np.diag(cov[np.ix_(left, left)]).sum(), 1e-12))
-        vr = np.sqrt(max(np.diag(cov[np.ix_(right, right)]).sum(), 1e-12))
-        wl = vr / (vl + vr)
-        return {
-            **{k: v * wl for k, v in _bisect(left).items()},
-            **{k: v * (1 - wl) for k, v in _bisect(right).items()},
-        }
+    def _ivp(sub_cov):
+        diag = np.maximum(np.diag(sub_cov), eps)
+        inv_diag = 1.0 / diag
+        return inv_diag / inv_diag.sum()
 
-    return np.array([_bisect(list(order)).get(i, 0) for i in range(len(cov))])
+    def _cluster_var(ids):
+        sub_cov = cov[np.ix_(ids, ids)]
+        w = _ivp(sub_cov)
+        return float(w @ sub_cov @ w)
+
+    weights = {i: 1.0 for i in order}
+    clusters = [order]
+    while clusters:
+        next_clusters = []
+        for cluster in clusters:
+            if len(cluster) <= 1:
+                continue
+            split = len(cluster) // 2
+            left, right = cluster[:split], cluster[split:]
+            var_l = _cluster_var(left)
+            var_r = _cluster_var(right)
+            alpha = 1.0 - var_l / (var_l + var_r + eps)
+            for i in left:
+                weights[i] *= alpha
+            for i in right:
+                weights[i] *= 1.0 - alpha
+            next_clusters.extend([left, right])
+        clusters = next_clusters
+
+    out = np.array([weights[i] for i in range(n)], dtype=float)
+    out = np.clip(out, 0.0, np.inf)
+    return out / out.sum() if out.sum() > 0 else np.ones(n) / n
 
 
 def risk_parity(cov, tol=1e-8, max_iter=500):
@@ -318,7 +347,7 @@ def train_ppo_agent(prices, device="cpu", is_em=False, volume=None, fdim=64,
 
     Uses rolling windows of returns as episodes. Reward = risk-adjusted return.
     """
-    from ..data.feature_engineering import build_dataset, make_features
+    from src.data import build_dataset
     import numpy as np
 
     X, S, R, H = build_dataset(prices, is_em=is_em, volume=volume, fdim=fdim,
@@ -410,8 +439,7 @@ def train_ppo_agent(prices, device="cpu", is_em=False, volume=None, fdim=64,
 def train_transformer_policy(prices, device="cpu", is_em=False, volume=None, fdim=64,
                              epochs=40, lr=3e-4, batch_size=32, train_end=None):
     """Train Transformer portfolio policy via direct Sharpe optimization."""
-    from ..data.feature_engineering import build_dataset
-    from ..models.loss_functions import dhrp_loss
+    from src.data import build_dataset
     import numpy as np
 
     X, S, R, H = build_dataset(prices, is_em=is_em, volume=volume, fdim=fdim,
@@ -545,8 +573,7 @@ def train_dfl_baseline(prices, device="cpu", is_em=False, volume=None,
                        epochs=40, lr=3e-4, fdim=None, seed=42, train_end=None):
     """Train the Decision-Focused Learning baseline."""
     import numpy as np
-    from ..data.feature_engineering import build_dataset, DEFAULT_FDIM
-    from .loss_functions import dhrp_loss
+    from src.data import build_dataset, DEFAULT_FDIM
 
     if fdim is None:
         fdim = DEFAULT_FDIM

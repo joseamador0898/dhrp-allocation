@@ -14,6 +14,14 @@ from src.models import hrp_allocation
 DEFAULT_FDIM = 64
 
 
+def compute_returns(prices: pd.DataFrame, how: str = "any") -> pd.DataFrame:
+    """Compute daily returns without pandas' implicit forward-fill behavior."""
+    if prices is None or prices.empty:
+        return pd.DataFrame()
+    rets = prices.sort_index().pct_change(fill_method=None)
+    return rets.dropna(how=how)
+
+
 def make_features(rets, fdim=DEFAULT_FDIM, is_em=False, volume=None):
     """Build feature vector from trailing return data.
 
@@ -100,7 +108,7 @@ def build_dataset(prices, window=252, step=5, is_em=False, volume=None, fdim=DEF
     Returns:
         (X, S, R, H) tuple, or (X, S, R, H, dates) if return_dates=True
     """
-    rets = prices.pct_change().dropna()
+    rets = compute_returns(prices, how="any")
     X, S, R, H, D = [], [], [], [], []
     fwd = 3 if is_em else 5
 
@@ -295,18 +303,18 @@ def make_macro_features(fred_df, normalize=True):
     if "yield_curve" in features.columns:
         features["yc_change_5d"] = features["yield_curve"].diff(5)
     if "vix" in features.columns:
-        features["vix_change_5d"] = features["vix"].pct_change(5)
+        features["vix_change_5d"] = features["vix"].pct_change(periods=5, fill_method=None)
         features["vix_above_20"] = (features["vix"] > 20).astype(float)
     if "credit_spread" in features.columns:
         features["cs_change_5d"] = features["credit_spread"].diff(5)
 
     # New derived features from extended series
     if "consumer_sent" in features.columns:
-        features["sent_change_5d"] = features["consumer_sent"].pct_change(5)
+        features["sent_change_5d"] = features["consumer_sent"].pct_change(periods=5, fill_method=None)
     if "cpi" in features.columns:
-        features["cpi_mom"] = features["cpi"].pct_change(1)  # month-over-month
+        features["cpi_mom"] = features["cpi"].pct_change(periods=1, fill_method=None)  # month-over-month
     if "dollar_index" in features.columns:
-        features["dollar_mom_21d"] = features["dollar_index"].pct_change(21)
+        features["dollar_mom_21d"] = features["dollar_index"].pct_change(periods=21, fill_method=None)
 
     features = features.ffill().bfill().fillna(0)
 
@@ -366,11 +374,11 @@ def make_commodity_features(fred_df, normalize=True):
     # Momentum signals (21-day % change)
     for col in ["wti_crude", "gold_am_fix", "copper", "wheat_global", "corn_maize"]:
         if col in features.columns:
-            features[f"{col}_mom_21d"] = features[col].pct_change(21)
+            features[f"{col}_mom_21d"] = features[col].pct_change(periods=21, fill_method=None)
 
     # Crude volatility regime (21-day rolling std of daily returns)
     if "wti_crude" in features.columns:
-        crude_ret = features["wti_crude"].pct_change()
+        crude_ret = features["wti_crude"].pct_change(fill_method=None)
         features["crude_vol_21d"] = crude_ret.rolling(21, min_periods=10).std()
 
     features = features.ffill().bfill().fillna(0)
@@ -729,14 +737,14 @@ def make_gdelt_sentiment_features(headlines_df, normalize=True):
 # ====================================================================
 """Gemini-powered structured financial sentiment extraction.
 
-Replaces FinBERT + Qwen3-8B with Gemini API calls:
+Replaces older local-LLM sentiment experiments with Gemini API calls:
 - 6-dimensional structured output per headline (vs FinBERT's 3-class scalar)
-- Schema-enforced JSON (vs Qwen3's free-text parsing)
+- Schema-enforced JSON
 - Zero GPU compute (API calls)
 - Works with any Gemini model (3.1 Pro, 3.1 Flash-Lite, 2.5 Flash, etc.)
 
 Usage:
-    from src.data.gemini_sentiment import extract_sentiment_batch
+    from src.data import extract_sentiment_batch
     features = extract_sentiment_batch(headlines_df, api_key=..., model='gemini-3.1-pro-preview')
     # features: dict[ticker, np.ndarray of shape (6,)]
 """
@@ -761,8 +769,11 @@ class HeadlineSentiment(BaseModel):
     rate_sensitivity: float      # -1.0 (benefits from rate cuts) to 1.0 (benefits from rate hikes)
 
 
-# Rebuild for Pydantic + Python 3.14 compatibility
-HeadlineSentiment.model_rebuild()
+# Rebuild forward references across Pydantic v1/v2.
+if hasattr(HeadlineSentiment, "model_rebuild"):
+    HeadlineSentiment.model_rebuild()
+else:
+    HeadlineSentiment.update_forward_refs()
 
 
 # Encode categorical fields as floats for the feature vector
@@ -1197,34 +1208,35 @@ def make_gs_macro_features(indices_df, fx_df=None, normalize=True):
     # VIX level and changes
     if "vix" in indices_df.columns:
         features["gs_vix"] = indices_df["vix"]
-        features["gs_vix_change_5d"] = indices_df["vix"].pct_change(5)
+        features["gs_vix_change_5d"] = indices_df["vix"].pct_change(periods=5, fill_method=None)
         features["gs_vix_above_20"] = (indices_df["vix"] > 20).astype(float)
 
     # Index momentum (21-day returns)
     for col in ["spx", "ndx", "rty", "mxef", "mxwo", "mxea", "bcomtr", "dxy"]:
         if col in indices_df.columns:
-            features[f"gs_{col}_mom_21d"] = indices_df[col].pct_change(21)
+            features[f"gs_{col}_mom_21d"] = indices_df[col].pct_change(periods=21, fill_method=None)
 
     # EM vs DM spread (MXEF vs MXWO momentum differential)
     if "mxef" in indices_df.columns and "mxwo" in indices_df.columns:
-        em_mom = indices_df["mxef"].pct_change(21)
-        dm_mom = indices_df["mxwo"].pct_change(21)
+        em_mom = indices_df["mxef"].pct_change(periods=21, fill_method=None)
+        dm_mom = indices_df["mxwo"].pct_change(periods=21, fill_method=None)
         features["gs_em_dm_spread"] = em_mom - dm_mom
 
     # Equity-commodity divergence
     if "spx" in indices_df.columns and "bcomtr" in indices_df.columns:
         features["gs_eq_cmd_spread"] = (
-            indices_df["spx"].pct_change(21) - indices_df["bcomtr"].pct_change(21)
+            indices_df["spx"].pct_change(periods=21, fill_method=None)
+            - indices_df["bcomtr"].pct_change(periods=21, fill_method=None)
         )
 
     # DXY regime
     if "dxy" in indices_df.columns:
-        features["gs_dxy_mom_5d"] = indices_df["dxy"].pct_change(5)
+        features["gs_dxy_mom_5d"] = indices_df["dxy"].pct_change(periods=5, fill_method=None)
 
     # FX features
     if fx_df is not None and not fx_df.empty:
         for col in fx_df.columns:
-            features[f"gs_{col}_mom_5d"] = fx_df[col].pct_change(5)
+            features[f"gs_{col}_mom_5d"] = fx_df[col].pct_change(periods=5, fill_method=None)
 
     features = features.ffill().bfill().fillna(0)
 
@@ -1386,11 +1398,11 @@ def load_gs_data(start, end):
 # ====================================================================
 # Module: llm_features.py
 # ====================================================================
-"""LLM feature extraction: FinBERT embeddings + Qwen3-8B structured sentiment.
+"""LLM feature extraction: FinBERT embeddings and optional structured sentiment.
 
 Designed to run on Google Colab free T4 (15GB VRAM):
 - FinBERT: ~2GB VRAM, batch inference
-- Qwen3-8B (4-bit): ~5GB VRAM, structured JSON output
+- Optional structured sentiment is disabled unless a caller supplies a model.
 """
 
 import json
@@ -1772,28 +1784,17 @@ def get_finance_sentence_embeddings(headlines, device="cuda",
     return embeddings.astype(np.float32)
 
 
-def _select_qwen_model():
-    """Select best Qwen3 model for available VRAM.
-
-    A100 80GB  -> Qwen3-32B  (4-bit ~20GB, best structured reasoning)
-    T4/V100    -> Qwen3-8B   (4-bit ~5GB, good baseline)
-    CPU        -> None        (skip)
-    """
+def _select_structured_sentiment_model():
+    """Return an optional local structured-sentiment model from the environment."""
     import torch
     if not torch.cuda.is_available():
         return None
-    props = torch.cuda.get_device_properties(0)
-    vram_gb = getattr(props, "total_memory", getattr(props, "total_mem", 0)) / 1e9
-    if vram_gb >= 70:
-        return "Qwen/Qwen3-32B"   # A100 80GB / H100: best reasoning + JSON
-    elif vram_gb >= 12:
-        return "Qwen/Qwen3-8B"    # A100 40GB / T4 / V100
-    return None
+    return os.environ.get("DHRP_STRUCTURED_SENTIMENT_MODEL")
 
 
-def get_qwen3_sentiment(headlines_batch, device="cuda", max_new_tokens=256,
-                        model_name=None):
-    """Extract structured sentiment using Qwen3-32B (A100) or Qwen3-8B (T4).
+def get_structured_sentiment(headlines_batch, device="cuda", max_new_tokens=256,
+                             model_name=None):
+    """Extract structured sentiment with a caller-supplied local causal LM.
 
     Auto-selects model based on GPU VRAM. Returns JSON with:
     sentiment (-1 to 1), risk_level, regime, key_factors, confidence.
@@ -1810,9 +1811,9 @@ def get_qwen3_sentiment(headlines_batch, device="cuda", max_new_tokens=256,
     from transformers import AutoTokenizer, AutoModelForCausalLM, BitsAndBytesConfig
 
     if model_name is None:
-        model_name = _select_qwen_model()
+        model_name = _select_structured_sentiment_model()
     if model_name is None:
-        print("  No GPU available for Qwen3. Returning neutral sentiment.")
+        print("  No structured-sentiment model configured. Returning neutral sentiment.")
         return [{"sentiment": 0.0, "risk_level": "medium",
                  "regime": "transitioning", "key_factors": [],
                  "confidence": 0.0}] * len(headlines_batch)
@@ -1906,7 +1907,7 @@ def sentiment_to_features(sentiment_data, feature_dim=16):
     """Convert structured sentiment output to a fixed-size feature vector.
 
     Args:
-        sentiment_data: dict from get_qwen3_sentiment
+        sentiment_data: dict from get_structured_sentiment
         feature_dim: output dimension
     Returns:
         np.ndarray of shape (feature_dim,)
@@ -1930,7 +1931,7 @@ def sentiment_to_features(sentiment_data, feature_dim=16):
     n_factors = len(sentiment_data.get("key_factors", []))
     feat[5] = min(n_factors / 5.0, 1.0)
 
-    # Confidence (from Qwen3-32B)
+    # Confidence from the structured sentiment model
     feat[6] = sentiment_data.get("confidence", 0.5)
 
     return feat
@@ -1941,7 +1942,7 @@ def build_text_features(
     rebalance_dates,
     tickers,
     use_finbert=True,
-    use_qwen=True,
+    use_structured_sentiment=True,
     finbert_dim=768,
     sentiment_dim=16,
     device="cuda",
@@ -1953,7 +1954,7 @@ def build_text_features(
         rebalance_dates: list of rebalance dates
         tickers: list of tickers
         use_finbert: whether to compute FinBERT embeddings
-        use_qwen: whether to compute Qwen3 sentiment
+        use_structured_sentiment: whether to compute structured sentiment
         finbert_dim: FinBERT embedding dimension
         sentiment_dim: structured sentiment feature dimension
         device: compute device
@@ -1966,7 +1967,7 @@ def build_text_features(
     n_assets = len(tickers)
 
     finbert_features = np.zeros((n_dates, n_assets, finbert_dim), dtype=np.float32) if use_finbert else None
-    sentiment_features = np.zeros((n_dates, n_assets, sentiment_dim), dtype=np.float32) if use_qwen else None
+    sentiment_features = np.zeros((n_dates, n_assets, sentiment_dim), dtype=np.float32) if use_structured_sentiment else None
 
     for i, rd in enumerate(rebalance_dates):
         for j, ticker in enumerate(tickers):
@@ -1979,8 +1980,8 @@ def build_text_features(
                 embs = get_finbert_embeddings(headlines, device=device)
                 finbert_features[i, j] = embs.mean(axis=0)  # Average over headlines
 
-            if use_qwen:
-                sentiments = get_qwen3_sentiment([headlines], device=device)
+            if use_structured_sentiment:
+                sentiments = get_structured_sentiment([headlines], device=device)
                 if sentiments:
                     sentiment_features[i, j] = sentiment_to_features(sentiments[0], sentiment_dim)
 
@@ -2510,10 +2511,10 @@ def make_spgci_features(assess_df, fwd_df=None, normalize=True):
         features = assess_df.copy()
         # Momentum features (21-day % change)
         for col in features.columns:
-            features[f"{col}_mom_21d"] = features[col].pct_change(21)
+            features[f"{col}_mom_21d"] = features[col].pct_change(periods=21, fill_method=None)
         # Volatility features (21-day rolling std of returns)
         for col in assess_df.columns:
-            ret = assess_df[col].pct_change()
+            ret = assess_df[col].pct_change(fill_method=None)
             features[f"{col}_vol_21d"] = ret.rolling(21, min_periods=10).std()
         frames.append(features)
 
@@ -2736,7 +2737,6 @@ def load_all_headlines(tickers, start, end, max_headlines=100, use_rss=True,
     if use_gdelt:
         print("  Loading GDELT historical headlines...")
         try:
-            from src.data.gdelt_loader import load_gdelt_headlines
             gdelt_df = load_gdelt_headlines(
                 tickers, start, end,
                 max_per_ticker=gdelt_max_per_ticker,

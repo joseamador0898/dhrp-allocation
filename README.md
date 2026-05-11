@@ -1,11 +1,12 @@
 # DHRP: Differentiable Hierarchical Risk Parity
 
-A differentiable extension of López de Prado's Hierarchical Risk Parity, plus the **DHRP-8** multi-universe portfolio benchmark. NeurIPS 2026 Evaluations & Datasets track submission.
+A differentiable, HRP-inspired portfolio allocator plus the **DHRP-8** multi-universe portfolio benchmark. NeurIPS 2026 Evaluations & Datasets track submission.
 
-- DHRP reduces to a classical HRP allocation under explicit limit
-  assumptions (Proposition 1; this is a relaxation, not a universal
-  recovery result).
-- 11 allocators, 8 asset universes, 10 random seeds.
+- DHRP is an HRP-inspired differentiable relaxation; we do not claim
+  the hard-routing limit reproduces full classical HRP.
+- 8 headline methods across 8 asset universes; 12 allocators are
+  implemented, with deep baselines reported in supplementary/appendix
+  experiments where evaluated.
 - Headline: DHRP commodities Sharpe $1.30 \pm 0.10$, PSR $0.999$
   (positive sample Sharpe; the FF3 alpha is $6.3\%$, $t=1.58$, not
   significant at the 5\% level).
@@ -20,18 +21,18 @@ git clone <this-repo>
 cd dhrp-allocation
 pip install -r requirements.txt
 bash scripts/reproduce_all.sh     # smoke test + full run
+bash scripts/reproduce_all.sh --smoke-only
 ```
 
-The first step of `reproduce_all.sh` is a 5-second import smoke test that verifies the environment. The full run takes about 7 GPU-hours on a T4 or 2 GPU-hours on an A100, end-to-end.
+The smoke path verifies imports, forward passes, dataset construction, DHRP/LLM-DHRP backtest execution, and zero fallback weight computations. The full run takes about 7 GPU-hours on a T4 or 2 GPU-hours on an A100, end-to-end.
 
-## Repo layout (20 files)
+## Repo layout
 
 ```
 paper/                  LaTeX source (1086-line single-file main.tex)
   main.tex              all sections + tables + figure + appendix + checklist
   references.bib        52 entries
   neurips_2026.sty      NeurIPS 2026 style file
-  main.pdf              built paper (15 pages)
 notebooks/
   llm_dhrp_experiments.ipynb    canonical experiment notebook
 src/                    flat Python package (no submodules)
@@ -43,13 +44,11 @@ src/                    flat Python package (no submodules)
 scripts/
   reproduce_all.sh      single-command repro driver
   validate_paper.py     pre-submission integrity scan
+  validate_claims.py    stale-claim and identity-pattern gate
   anonymize_check.py    double-blind de-anonymization scan
-  diagnose_llm_dhrp.py  optional LLM-DHRP diagnostics (notebook cell 24)
-  probe_analysis.py     optional interpretability probes (notebook cell 24)
 data/
   croissant/dhrp-8universe.json    Croissant 1.1 metadata
-  headlines/all_headlines.csv      cached news headlines (sample)
-README.md, LICENSE, requirements.txt, .gitignore
+README.md, LICENSE, requirements.txt, requirements-frozen.txt, .gitignore
 ```
 
 ## Reproducing the paper
@@ -72,7 +71,7 @@ The script runs `notebooks/llm_dhrp_experiments.ipynb` end-to-end, validates the
 | 13, 14 | Deep baselines + full backtest |
 | 15 to 19 | Statistical tests + ablations |
 | 23 | Multi-seed expansion: 10 seeds across 8 universes (paper headline) |
-| 24 | Probe analysis (interpretability) |
+| 24 | Artifact validation and stale-claim checks |
 
 ### Compute budget
 
@@ -82,7 +81,6 @@ The script runs `notebooks/llm_dhrp_experiments.ipynb` end-to-end, validates the
 | Single-seed training | 0.5 | 0.1 |
 | Multi-seed across 8 universes | 6.0 | 1.5 |
 | Statistical analysis | 0.2 CPU | n/a |
-| Probe analysis | 0.1 | 0.05 |
 | **Total** | **about 7.3** | **about 1.8** |
 
 Plus about 30 minutes of CPU time for figures, table generation, and Croissant validation.
@@ -106,8 +104,9 @@ Verification checklist:
 
 - [ ] DHRP Sharpe at least 0.95 in Commodities, at least 1.20 in Crypto
 - [ ] DHRP PSR above 0.95 in both Commodities and Crypto
-- [ ] DHRP FF3 alpha t-statistic above 2.0 in Commodities
+- [ ] DHRP FF3 alpha in Commodities is reported as about 6.3%, t≈1.58, not significant at 5%
 - [ ] All 8 universes have non-empty multi-seed result CSVs
+- [ ] Pairwise DHRP-vs-baseline tests are reported separately from PSR
 
 ## Building the paper PDF
 
@@ -125,7 +124,10 @@ Requires a TeX distribution (MiKTeX on Windows, TeX Live on Linux or macOS). Out
 - **GPU**: T4 16 GB or A100 40 GB recommended; CPU-only works but is roughly 20x slower.
 - **OS**: Tested on Ubuntu 22.04 (Google Colab) and Windows 11.
 
-All data is publicly available; no API keys required for the headline experiments. Sources: Yahoo Finance ETF prices via `yfinance`, Fama-French factors via `pandas-datareader`, news headlines via GDELT 2.0 / RSS, FinBERT embeddings via the `ProsusAI/finbert` HuggingFace model. Full attribution and licensing in `data/croissant/dhrp-8universe.json`.
+`requirements.txt` gives minimum compatible ranges. `requirements-frozen.txt`
+captures the local environment used for artifact validation.
+
+All raw market data is fetched from public upstream sources by the scripts; no raw proprietary archives are redistributed. Sources: Yahoo Finance ETF prices via `yfinance`, Fama-French factors via `pandas-datareader`, news headlines via GDELT 2.0 / RSS, and FinBERT embeddings derived from the `ProsusAI/finbert` HuggingFace model. Full attribution and licensing in `data/croissant/dhrp-8universe.json`.
 
 ## Citation
 

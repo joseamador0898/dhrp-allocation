@@ -28,6 +28,15 @@ TABLES = PAPER / "tables"
 FIGURES = PAPER / "figures"
 RESULTS = ROOT / "results"
 
+GENERIC_DEANON_REGEXES = [
+    (r"\b[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}\b", "email-like"),
+    (r"github\.com[/:](?!anonymous|orgs/anonymous)[\w.-]+", "github-user-url"),
+    (r"linkedin\.com/in/[\w-]+", "linkedin-url"),
+    (r"[Cc]:[/\\]+Users[/\\]+(?!<|placeholder)[\w.-]+", "windows-user-path"),
+    (r"/Users/(?!shared|guest|placeholder)[\w.-]+", "macos-user-path"),
+    (r"/home/(?!user|root|placeholder)[\w.-]+", "linux-home-path"),
+]
+
 
 def red(s):    return f"\033[31m{s}\033[0m"
 def green(s):  return f"\033[32m{s}\033[0m"
@@ -82,6 +91,14 @@ def find_todos(text: str) -> list[tuple[int, str]]:
                 issues.append((i, line.strip()[:120]))
                 break
     return issues
+
+
+def scan_deanon_text(text: str) -> list[tuple[str, str]]:
+    hits = []
+    for pattern, label in GENERIC_DEANON_REGEXES:
+        for match in re.finditer(pattern, text, flags=re.IGNORECASE):
+            hits.append((label, match.group(0)))
+    return hits
 
 
 def main() -> int:
@@ -202,25 +219,24 @@ def main() -> int:
             errors.append(f"Croissant metadata problem: {e}")
             print(f"  {red('FAIL')} {e}")
 
-    # 8. Anonymization scan (paper text)
-    print("\n[8] Anonymization scan in paper text...")
-    deanonymizing_strings = [
-        "Jose Amador", "joseamador", "jlaj@", "@connect.ust.hk",
-        "github.com/joseamador0898", "GitHub: https://github.com/jose",
-        "luigi",  # local username
-    ]
+    # 8. Anonymization scan (generic patterns only; private patterns live in .anonymize_extras.txt)
+    print("\n[8] Anonymization scan...")
     flags = []
-    for tex in [PAPER / "main.tex"]:
-        if not tex.exists():
+    for candidate in [
+        PAPER / "main.tex",
+        ROOT / "README.md",
+        ROOT / "data" / "croissant" / "dhrp-8universe.json",
+        ROOT / "scripts" / "validate_paper.py",
+    ]:
+        if not candidate.exists():
             continue
-        text = tex.read_text(encoding="utf-8")
-        for s in deanonymizing_strings:
-            if s.lower() in text.lower():
-                flags.append((tex.name, s))
+        text = candidate.read_text(encoding="utf-8", errors="ignore")
+        for label, hit in scan_deanon_text(text):
+            flags.append((candidate.relative_to(ROOT).as_posix(), label, hit))
     if flags:
-        for fname, s in flags:
-            errors.append(f"De-anonymizing string in {fname}: {s!r}")
-            print(f"  {red('FAIL')} {fname}: contains {s!r}")
+        for fname, label, hit in flags:
+            errors.append(f"De-anonymizing pattern in {fname}: {label} {hit!r}")
+            print(f"  {red('FAIL')} {fname}: {label} {hit!r}")
     else:
         print(f"  {green('OK')} No de-anonymizing strings detected")
 
@@ -298,6 +314,25 @@ def main() -> int:
     print(f"  Upload data/croissant/dhrp-8universe.json to:")
     print(f"  https://huggingface.co/spaces/JoaquinVanscholen/croissant-checker")
     print(f"  (manual step; cannot automate without Croissant Python library)")
+
+    # 12. Stale claim validator
+    print("\n[12] Stale claim validator...")
+    try:
+        import subprocess
+        r = subprocess.run(
+            [sys.executable, str(ROOT / "scripts" / "validate_claims.py")],
+            capture_output=True,
+            text=True,
+        )
+        if r.returncode == 0:
+            print(f"  {green('OK')} validate_claims.py passed")
+        else:
+            errors.append("validate_claims.py found stale or unsafe claims")
+            print(f"  {red('FAIL')} validate_claims.py")
+            print(r.stdout.strip())
+    except Exception as e:
+        errors.append(f"Could not run validate_claims.py: {e}")
+        print(f"  {red('FAIL')} validate_claims.py: {e}")
 
     # Summary
     print("\n" + "=" * 70)

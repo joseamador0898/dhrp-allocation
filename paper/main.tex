@@ -64,13 +64,13 @@ and recursive bisection with a temperature-scaled soft-gating tree, and
 \textbf{the DHRP-8 benchmark}, the first multi-universe portfolio
 evaluation framework reporting Probabilistic Sharpe Ratios
 \citep{Bailey2012PSR} alongside Fama--French
-\citep{FamaFrench2015,Carhart1997} and AQR commodity factor alphas
-\citep{AsnessMoskowitzPedersen2013} under multi-seed ($n=10$) protocols
+\citep{FamaFrench2015,Carhart1997} factor alphas under multi-seed ($n=10$) protocols
 across eight ETF asset classes (developed markets, emerging markets,
 commodities, sectors, global multi-asset, factors, crypto, and bonds).
-We evaluate eleven methods including DHRP, an LLM-augmented variant
-(LLM-DHRP), six classical baselines (EW, MV, MINVAR, HRP, RP, MAXDIV),
-and three deep baselines (MLP, Transformer, PPO).
+We report eight headline methods--DHRP, an LLM-augmented variant
+(LLM-DHRP), and six classical baselines (EW, MV, MINVAR, HRP, RP,
+MAXDIV)--with four additional deep allocators implemented for
+supplementary comparisons.
 %
 DHRP achieves out-of-sample Sharpe ratios of
 $\mathbf{1.304 \pm 0.10}$ on commodities ($\text{PSR}=0.999$) and
@@ -132,12 +132,13 @@ that makes trees interpretable.
 
 We bring these architectures to portfolio allocation. \textbf{DHRP}
 replaces HRP's clustering and bisection with a temperature-scaled
-soft-gating tree that recovers classical HRP as routing temperature
-$\tau \to 0$ (Proposition~\ref{prop:recovery}), enabling end-to-end
-gradient training. We evaluate it against ten baselines across
+soft-gating tree, enabling end-to-end gradient training while retaining
+an HRP-like inductive bias. It is an HRP-inspired differentiable
+relaxation; we do not claim the hard-routing limit reproduces the full
+classical HRP algorithm. We evaluate eight headline methods across
 \textbf{eight asset universes} with multi-seed reporting (10 seeds,
-mean$\pm$std, Probabilistic Sharpe Ratios) and Fama--French + AQR
-factor alphas. We also test cross-modal LLM augmentation (LLM-DHRP)
+mean$\pm$std, Probabilistic Sharpe Ratios) and Fama--French factor
+alphas. We also test cross-modal LLM augmentation (LLM-DHRP)
 fusing FinBERT \citep{Huang2023} embeddings of asset-attributed news,
 and find that text augmentation provides \emph{no statistical lift}
 under multi-seed reporting---joining a growing benchmark literature
@@ -147,18 +148,19 @@ against single-seed claims of LLM benefit in finance.
 \paragraph{Contributions.}
 \begin{enumerate}\itemsep0.05em
 \item \textbf{DHRP architecture (Section~\ref{sec:method}):} a
-  temperature-scaled soft-gating tree with HRP recovery in the
-  $\tau \to 0$ limit (Proposition~\ref{prop:recovery}, proof in
-  Appendix~\ref{app:proof}).
+  temperature-scaled soft-gating tree that provides a differentiable
+  HRP-like allocation bias without asserting exact classical-HRP
+  equivalence.
 \item \textbf{DHRP-8 benchmark (Section~\ref{sec:benchmark}):} an
   8-universe portfolio evaluation framework (DM, EM, commodities,
-  sectors, global multi-asset, factors, crypto, bonds) with eleven
-  methods, 10-seed reporting, PSR, FF3+AQR factor alphas,
-  transaction-cost sensitivity, and Croissant~1.1 metadata.
+  sectors, global multi-asset, factors, crypto, bonds) with eight
+  headline methods, 12 implemented allocators, 10-seed reporting, PSR,
+  Fama--French factor alphas, transaction-cost sensitivity, and
+  Croissant~1.1 metadata.
 \item \textbf{Empirical findings (Sections~\ref{sec:results},
   \ref{sec:llmablation}):} DHRP achieves PSR $> 0.99$ on commodities
   ($1.30 \pm 0.10$ Sharpe) and crypto ($1.29 \pm 0.05$), beats
-  classical HRP in 7/8 universes, and ties or beats all classical
+  classical HRP in six of eight universes, and ties or beats all classical
   baselines in DM. Mean-variance dominates equity-heavy global
   multi-asset. LLM augmentation regresses ($-0.21$ Sharpe in DM,
   $-0.57$ in commodities) under multi-seed reporting.
@@ -242,11 +244,11 @@ Figure~\ref{fig:arch}.
 % --- Inputs (left column) ---
 \node[price]                              (x)   {Price features\\ $x_t \in \mathbb{R}^{f}$};
 \node[cov,    below=0.35cm of x]          (S)   {Covariance\\ $\Sigma_t \in \mathbb{R}^{n\times n}$};
-\node[txt,    below=0.45cm of S]          (T)   {Per-asset text\\ $T_t \in \mathbb{R}^{n\times d_T}$\\ (LLM-DHRP only)};
+\node[txt,    below=0.45cm of S]          (T)   {Rolling text embeddings\\ $\{e_{t,a}\}_{a=1}^n$\\ (LLM-DHRP only)};
 
 % --- Feature fusion (middle column) ---
 \node[fuse,   right=1.1cm of x]           (norm) {LayerNorm\\ + cov proj};
-\node[fuse,   right=1.1cm of T]           (txp)  {Text proj\\ + cross-attn\\ gate $\sigma(\theta_g{-}1)$};
+\node[fuse,   right=1.1cm of T]           (txp)  {Text proj\\ $u_t=[\mathrm{mean};\mathrm{max}]$\\ + cross-attn gate};
 \node[fuse,   right=1.1cm of S, yshift=0.05cm] (h) {Fused $h_t$\\ $\in \mathbb{R}^{f}$};
 
 % --- Soft-gating tree (right column) ---
@@ -282,11 +284,11 @@ Figure~\ref{fig:arch}.
 % --- Legend (compact) ---
 \node[below=0.6cm of T, xshift=0.5cm, font=\tiny, align=left] {%
   \textbf{Legend:} blue = price/covariance pathway \quad orange = text pathway \quad green = fusion / output.\\
-  At $\tau \to 0$ with one-hot $A$, DHRP recovers classical HRP (Prop.~\ref{prop:recovery}).};
+  DHRP is an HRP-inspired differentiable relaxation, not an exact hard-routing reproduction of classical HRP.};
 \end{tikzpicture}%
 }
 \caption{DHRP and LLM-DHRP architecture. Price features, covariance,
-and (optional) per-asset text embeddings are fused via LayerNorm and a
+and (optional) global text summaries are fused via LayerNorm and a
 gated cross-attention residual into $h_t$, which routes through a
 temperature-scaled binary gating tree. Leaf budgets are combined with a
 learned soft assignment matrix and blended with inverse-volatility
@@ -346,38 +348,20 @@ penalty, concentration (HHI), and turnover penalty:
 + \lambda_c \mathrm{HHI}(w) + \lambda_t \mathrm{TO}(w).
 \end{equation}
 The HRP regularizer warm-starts from classical HRP weights, providing
-the inductive bias that supports the recovery property below.
+the inductive bias that anchors the relaxation.
 
-\begin{proposition}[HRP recovery, conditional form]
-\label{prop:recovery}
-Fix a covariance matrix $\Sigma \in \mathbb{R}^{n\times n}$ for which
-classical HRP produces a unique single-linkage agglomerative tree
-$T^\star$ with $n$ leaves and a quasi-diagonal asset ordering, and let
-$w^{\text{HRP}}(\Sigma) \in \Delta^{n-1}$ be the resulting allocation.
-Suppose the DHRP layer is configured so that (i) the tree depth
-satisfies $2^L \geq n$, (ii) the asset-leaf assignment $A$ is one-hot,
-matching the HRP quasi-diagonal ordering, (iii) at every internal node
-the gate logits are aligned with the corresponding HRP split direction,
-(iv) the leaf prior $\beta$ matches the cumulative inverse-volatility
-budget that HRP's recursive bisection assigns to each leaf of
-$T^\star$, and (v) the inverse-volatility blend is disabled with
-$\alpha = 1$. Then in the limit $\tau_k \to 0$ for all internal nodes,
-the DHRP forward pass on $\Sigma$ converges to $w^{\text{HRP}}(\Sigma)$.
-\end{proposition}
-
-\noindent\textit{Proof sketch.} Under the listed assumptions, hard-
-route gates concentrate on the HRP cluster split direction at every
-node, the soft assignment $A$ with one-hot rows reproduces leaf
-membership, the leaf prior $\beta$ exactly matches the bisection
-budgets, and $\alpha = 1$ disables the inverse-vol blend. Full
-construction in Appendix~\ref{app:proof}.
-
-This is a relaxation, not a universal-recovery result. The DHRP layer
-does not differentiate through agglomerative clustering itself: it
-learns an amortized mapping $(x_t, \Sigma_t) \mapsto w_t$ that admits
-the HRP allocation as a fixed point at the limit above. We treat
-``DHRP recovers classical HRP as $\tau \to 0$'' as informal shorthand
-for this conditional statement throughout the paper.
+\paragraph{Architecture scope.}
+DHRP is an HRP-inspired differentiable allocator, not a differentiable
+implementation of the full L\'opez de Prado algorithm. The implemented
+tree sends mass through temperature-scaled gates, learns soft
+asset-to-leaf assignments, and blends the resulting budget with
+inverse-volatility weights. This architecture can approximate
+HRP-like allocations when its split budgets, assignments, and
+volatility blend are constrained to match a fixed HRP solution, but its
+hard-routing limit does not generally reproduce recursive HRP
+bisection across all subtrees. Exact reproduction would require an
+architecture in which each internal node emits split budget proportions
+for both children.
 
 A row-wise entropy-regularized interpretation of the soft assignment
 matrix (Appendix~\ref{app:ot}) connects the assignment to the Sinkhorn
@@ -390,12 +374,19 @@ rather than the full bi-stochastic Sinkhorn iteration.
 LLM-DHRP augments the price pathway with a single text summary vector
 per timestep, built from per-asset news headlines. For each asset $a$
 we collect headlines within a 90-day rolling window, encode each
-headline with FinBERT \citep{Huang2023} ($d_T = 768$), L2-normalize per
-asset, and aggregate to a per-asset vector via concatenated mean and
-max-pooling, producing $\bar T_t \in \mathbb{R}^{n \times 2 d_T}$. We
-then collapse the asset axis with a normalized mean to obtain a single
-timestep-level text summary $u_t \in \mathbb{R}^{2 d_T}$. A
-TextProjection MLP maps $u_t$ to $\mathbb{R}^f$, and a gated residual
+headline with FinBERT \citep{Huang2023} ($d_T = 768$), and average
+headline embeddings within the asset window to obtain
+$e_{t,a}\in\mathbb{R}^{d_T}$. We normalize
+$\tilde e_{t,a}=e_{t,a}/(\|e_{t,a}\|_2+\epsilon)$ and form the global
+summary
+\[
+u_t =
+\left[
+\frac{1}{n}\sum_{a=1}^{n}\tilde e_{t,a};
+\max_{a=1,\ldots,n}\tilde e_{t,a}
+\right]\in\mathbb{R}^{2d_T}.
+\]
+A TextProjection MLP maps $u_t$ to $\mathbb{R}^f$, and a gated residual
 fuses it into the price pathway:
 \begin{equation}
 \hat h_t = h_t + g_{\text{text}} \cdot
@@ -422,7 +413,7 @@ all possible per-asset text architectures.
 \label{sec:benchmark}
 
 DHRP-8 evaluates portfolio allocation across eight asset universes,
-eleven methods, and a five-family statistical battery. Detailed protocol
+eight headline methods, 12 implemented allocators, and a five-family statistical battery. Detailed protocol
 specifications and the full per-universe asset list are in
 Appendix~\ref{app:hyperparams}.
 
@@ -433,12 +424,14 @@ Non-equity: commodities (10), crypto (10, post-2020 history), bonds
 (10). All ETFs are publicly traded on US exchanges with $\geq$12 years
 of daily history (crypto: 2020--2026 only).
 
-\paragraph{Baselines (11 total).}
+\paragraph{Methods.}
 Classical: equal-weight (EW), mean--variance (MV), minimum-variance
 (MINVAR), risk parity (RP), maximum diversification (MAXDIV),
-hierarchical risk parity (HRP). Deep: MLP with covariance-projection,
-Portfolio Transformer \citep{KisielGorse2022}, PPO. Decision-focused:
-DFL baseline mirroring \citet{KimLee2025DFL}. Plus DHRP and LLM-DHRP.
+hierarchical risk parity (HRP). DHRP and LLM-DHRP complete the eight
+headline methods. Additional implemented allocators--MLP with
+covariance-projection, Portfolio Transformer \citep{KisielGorse2022},
+PPO, and DFL mirroring \citet{KimLee2025DFL}--are reported in
+supplementary/appendix experiments where evaluated.
 
 \paragraph{Multi-seed protocol.}
 Every neural method is trained independently across $S = 10$ seeds
@@ -455,8 +448,7 @@ We report (i)~Probabilistic Sharpe Ratio \citep{Bailey2012PSR}
 and kurtosis); (ii)~Newey--West HAC t-statistics
 \citep{NeweyWest1987}; (iii)~Fama--French 3 + 5 factor
 \citep{FamaFrench2015} and momentum \citep{Carhart1997} regression
-alphas plus AQR cross-sectional Value/Momentum
-\citep{AsnessMoskowitzPedersen2013} for commodities; (iv)~stationary
+alphas; (iv)~stationary
 block bootstrap \citep{PolitisRomano1994} pairwise Sharpe-difference
 tests with Holm--Bonferroni \citep{Holm1979} and Diebold--Mariano
 \citep{DieboldMariano1995} forecast accuracy; (v)~SPA \citep{Hansen2005}
@@ -636,8 +628,11 @@ DHRP's hierarchical inductive bias is most valuable when average
 pairwise correlation is low (commodities $\approx 0.3$, crypto
 $\approx 0.4$) and the cross-asset structure is regime-dependent
 rather than factor-dominated; it underperforms classical mean-variance
-in equity-heavy universes (DM, EM, global multi-asset) where MV's
-closed-form solution exploits factor exposures more efficiently. The
+in the equity-heavy universes where factor exposures dominate the
+covariance structure (emerging markets and global multi-asset), even
+though it improves on MV in developed markets. In sectors and US-factor
+ETFs the headline Sharpe is within 0.03 of HRP, so the gain there is
+not meaningful. The
 LLM augmentation result is a negative finding rather than a definitive
 no---per-asset news coverage is the binding constraint
 (Section~\ref{sec:llmablation}), and finance-domain sentence-transformers
@@ -653,9 +648,8 @@ regime.
 \section{Conclusion}
 \label{sec:conclusion}
 
-DHRP is a differentiable, HRP-inspired allocator that reduces to a
-classical HRP allocation under explicit limit assumptions
-(Proposition~\ref{prop:recovery}). On DHRP-8, it achieves a Sharpe of
+DHRP is a differentiable, HRP-inspired allocator with a soft-gating
+tree and HRP-like regularization. On DHRP-8, it achieves a Sharpe of
 $1.30 \pm 0.10$ in commodities (PSR $0.999$) and $1.29 \pm 0.05$ in
 crypto (PSR $0.991$), and beats classical HRP in six of eight universes
 (the two losses, sectors and factors, are within 0.03 Sharpe of HRP).
@@ -680,7 +674,7 @@ to support reproducible portfolio research.
 \item {\bf Claims}\\
 \textbf{Question:} Do the main claims made in the abstract and introduction accurately reflect the paper's contributions and scope?\\
 \textbf{Answer:} \answerYes{}\\
-\textbf{Justification:} The abstract and Section~\ref{sec:intro} claim three contributions: (i) DHRP architecture with HRP recovery (Proposition~\ref{prop:recovery}), (ii) the 8-universe DHRP-8 benchmark with multi-seed PSR reporting, and (iii) honest negative LLM ablation. Each contribution is delivered in Sections~\ref{sec:method}, \ref{sec:benchmark}, and \ref{sec:llmablation} respectively.
+\textbf{Justification:} The abstract and Section~\ref{sec:intro} claim three contributions: (i) DHRP architecture as an HRP-inspired differentiable relaxation, (ii) the 8-universe DHRP-8 benchmark with multi-seed PSR reporting, and (iii) honest negative LLM ablation. Each contribution is delivered in Sections~\ref{sec:method}, \ref{sec:benchmark}, and \ref{sec:llmablation} respectively.
 
 \item {\bf Limitations}\\
 \textbf{Question:} Does the paper discuss the limitations of the work performed by the authors?\\
@@ -689,8 +683,8 @@ to support reproducible portfolio research.
 
 \item {\bf Theory assumptions and proofs}\\
 \textbf{Question:} For each theoretical result, does the paper provide the full set of assumptions and a complete (and correct) proof?\\
-\textbf{Answer:} \answerYes{}\\
-\textbf{Justification:} Proposition~\ref{prop:recovery} (HRP recovery) is stated with explicit assumptions (unique HRP tree from agglomerative clustering) in Section~\ref{sec:dhrp_layer}, with a proof sketch in the section and the full proof in Appendix~\ref{app:proof}.
+\textbf{Answer:} \answerNA{}\\
+\textbf{Justification:} The paper does not rely on an exact-theorem claim for the implemented layer. Section~\ref{sec:dhrp_layer} states the architecture scope and explicitly says DHRP is an HRP-inspired differentiable relaxation rather than a differentiable implementation of the full classical algorithm.
 
 \item {\bf Experimental result reproducibility}\\
 \textbf{Question:} Does the paper fully disclose all the information needed to reproduce the main experimental results of the paper to the extent that it affects the main claims and/or conclusions of the paper (regardless of whether the code and data are provided or not)?\\
@@ -710,7 +704,7 @@ to support reproducible portfolio research.
 \item {\bf Experiment statistical significance}\\
 \textbf{Question:} Does the paper report error bars suitably and correctly defined or other appropriate information about the statistical significance of the experiments?\\
 \textbf{Answer:} \answerYes{}\\
-\textbf{Justification:} All neural methods report mean$\pm$std over 10 random seeds. Significance is reported through (i) Probabilistic Sharpe Ratios \citep{Bailey2012PSR}, (ii) HAC Newey--West t-statistics \citep{NeweyWest1987}, (iii) Fama--French and AQR factor regression alphas, (iv) pairwise Sharpe-difference tests via stationary block bootstrap \citep{PolitisRomano1994} with Holm--Bonferroni correction, and (v) SPA \citep{Hansen2005} and MCS \citep{HansenLundeNason2011} multi-method tests.
+\textbf{Justification:} All neural methods report mean$\pm$std over 10 random seeds. Significance is reported through (i) Probabilistic Sharpe Ratios \citep{Bailey2012PSR}, (ii) HAC Newey--West t-statistics \citep{NeweyWest1987}, (iii) Fama--French factor regression alphas, (iv) pairwise Sharpe-difference tests via stationary block bootstrap \citep{PolitisRomano1994} with Holm--Bonferroni correction, and (v) SPA \citep{Hansen2005} and MCS \citep{HansenLundeNason2011} multi-method tests.
 
 \item {\bf Experiments compute resources}\\
 \textbf{Question:} For each experiment, does the paper provide sufficient information on the computer resources (type of compute workers, memory, time of execution) needed to reproduce the experiments?\\
@@ -720,7 +714,7 @@ to support reproducible portfolio research.
 \item {\bf Code of ethics}\\
 \textbf{Question:} Does the research conducted in the paper conform, in every respect, with the NeurIPS Code of Ethics?\\
 \textbf{Answer:} \answerYes{}\\
-\textbf{Justification:} The work uses public market data, public news headlines under fair-use research exemption, and a publicly available pre-trained LLM (FinBERT, ProsusAI). No human subjects, no PII. The Croissant metadata documents survivorship bias and other dataset caveats per the NeurIPS RAI guidelines.
+\textbf{Justification:} The work uses public market data, public news headlines fetched by scripts subject to upstream provider terms, and a publicly available pre-trained LLM (FinBERT, ProsusAI). No human subjects, no PII. The Croissant metadata documents survivorship bias and other dataset caveats per the NeurIPS RAI guidelines.
 
 \item {\bf Broader impacts}\\
 \textbf{Question:} Does the paper discuss both potential positive societal impacts and negative societal impacts of the work performed?\\
@@ -782,49 +776,25 @@ with upstream feature extractors. DHRP
 (Section~\ref{sec:dhrp_layer}) replaces both stages with smooth
 parameterized counterparts that preserve the hierarchical inductive bias.
 
-\section{Proof of Proposition~\ref{prop:recovery}}
+\section{Architecture Scope}
 \label{app:proof}
 
-\begin{proof}[Proof of Proposition~\ref{prop:recovery}]
-Let $T^*$ denote the unique binary tree produced by single-linkage
-agglomerative clustering on the correlation-distance matrix
-$D_{ij} = \sqrt{(1-\rho_{ij})/2}$ from $\Sigma$. We construct
-$\theta^* = (\theta_\tau, \theta_\beta, A, \theta_\alpha)$ such that the
-DHRP forward pass returns the classical HRP weight vector $w^{\text{HRP}}$.
+The implemented DHRP layer is intentionally presented as an
+HRP-inspired relaxation. Classical HRP recursively splits budget across
+both children of each tree node. The DHRP layer instead computes
+temperature-scaled routing probabilities over a learned soft-gating
+tree, combines them with learned asset-to-leaf assignments, and blends
+the result with inverse volatility. This produces a differentiable
+allocator that can be trained end-to-end and regularized toward HRP
+weights, but it is not a differentiable clone of agglomerative
+clustering plus recursive bisection.
 
-\emph{Step 1 (gates concentrate).} The softmax
-$\pi_k = \mathrm{softmax}(g_k(h_t)/\tau_k)$ satisfies, for any input
-$h_t$ on which the logits $g_k(h_t)$ are non-degenerate,
-$\lim_{\tau_k \to 0} \pi_k = e_{\arg\max_b g_k(h_t)_b}$ (one-hot at
-the argmax). Choose gate parameters so that $\arg\max g_k(h_t)$ matches
-the HRP cluster split direction at node $k$: by construction this is
-achievable because each $g_k$ is a 2-layer MLP with sufficient capacity
-to encode the indicator of the HRP cluster boundary at node $k$ given
-$\Sigma_t$.
-
-\emph{Step 2 (assignment is one-hot).} The leaf-assignment matrix
-$A \in \mathbb{R}^{n \times 2^L}$ is initialized so that asset $i$ is
-mapped to leaf $i \mod 2^L$ with logit $+M$ for the target leaf and
-$-M$ elsewhere. As $M \to \infty$, $\mathrm{softmax}(A_{i,:})$
-concentrates on the target leaf. Choose the leaf-target permutation
-to match the HRP quasi-diagonal cluster ordering of $T^*$.
-
-\emph{Step 3 (leaf budgets match HRP bisection).} Under hard routing
-(Step 1), $b_\ell = \beta_\ell$ if leaf $\ell$ is reached and $0$
-otherwise. Set $\beta_\ell$ to equal the cumulative inverse-volatility
-weight that HRP's recursive bisection assigns to leaf $\ell$; this is a
-linear functional of $\Sigma$ and so encodable in $\theta_\beta$.
-
-\emph{Step 4 (vol blend disabled).} Set $\theta_\alpha \to +\infty$ so
-$\alpha = \sigma(\theta_\alpha) \to 1$, removing the inverse-volatility
-blend in Eq.~\ref{eq:blend}. The output is then exactly $a_i = w_i$
-from Step 3.
-
-By Steps 1--4, the DHRP weight vector equals the HRP weight vector
-applied to the same $\Sigma$. The construction is constructive (not
-existential) and uses standard universal-approximation results for
-2-layer MLPs to encode the gate decision boundaries.
-\end{proof}
+This distinction matters in the hard-routing limit. As temperatures
+shrink, the gate probabilities concentrate, while classical HRP still
+allocates nonzero capital recursively across many subtrees. Exact
+classical-HRP reproduction would require a different layer in which
+each internal node emits explicit split-budget proportions for both
+children, with the tree fixed to the HRP quasi-diagonal ordering.
 
 \section{Row-wise Entropy-Regularized View of the Soft Leaf Assignment}
 \label{app:ot}
@@ -872,8 +842,7 @@ This view recasts each gradient step on $A$ as an implicit single-step
 Sinkhorn update with an adaptive cost. It justifies the soft assignment
 as principled differentiable clustering and motivates the
 inverse-temperature interpretation of logit magnitude: the limit of
-large $|A|$ recovers the hard-clustering solution used in
-Proposition~\ref{prop:recovery}.
+large $|A|$ approaches a hard leaf assignment.
 
 \section{Hyperparameters}
 \label{app:hyperparams}
@@ -990,18 +959,18 @@ mandatory standard. The full JSON-LD is at
 \texttt{data/croissant/dhrp-8universe.json} in the supplementary
 materials. Key fields:
 \begin{itemize}\itemsep0.05em
-  \item \textbf{Distribution}: 8 universe price archives (CSV) +
-    Fama--French factor file + asset-attributed news headlines
-    (parquet) + 10-seed model checkpoints.
-  \item \textbf{Schema}: Date (ISO~8601), Ticker, Adjusted Close (USD),
-    Volume per asset; date, ticker, headline, FinBERT 768-dim
-    embedding per headline.
+  \item \textbf{Distribution}: code, metadata, the canonical notebook,
+    and the reproduction script. Raw upstream market/news archives are
+    fetched dynamically by script and are not redistributed.
+  \item \textbf{Schema}: logical record sets for universes, prices, and
+    headline-derived FinBERT features generated during reproduction.
   \item \textbf{Train/test splits}: Fixed by date. Train 2012-04 to
     2020-06; Test 2020-07 to 2026-04 (Crypto train ends 2022-12).
   \item \textbf{Responsible-AI}: Survivorship bias warning (static ETF
     universes; no delisting adjustment); known data gaps (CPER late
-    inception); license: ETF prices public via Yahoo Finance;
-    headlines under fair-use research exemption.
+    inception); license boundaries: code/metadata are released by the
+    authors, while fetched prices, news, and factor data remain subject
+    to upstream provider terms.
   \item \textbf{Persistent hosting}: HuggingFace Datasets
     (anonymized URL during review; final URL post-acceptance).
 \end{itemize}
@@ -1009,13 +978,10 @@ materials. Key fields:
 \section{Reproducibility Checklist Notes}
 \label{app:repro_notes}
 
-\paragraph{Compute budget.} Total training compute for the multi-seed
-result in Table~\ref{tab:headline}: $\sim 10$ GPU-hours on NVIDIA T4
-(Google Colab Pro). Each seed-universe pair takes $\sim 5$ minutes for
-DHRP and $\sim 8$ minutes for LLM-DHRP. Backtest is CPU-bound and
-takes $\sim 2$ minutes per seed-universe pair. Full end-to-end
-reproduction including FinBERT embedding extraction: $\sim 15$
-GPU-hours.
+\paragraph{Compute budget.} Full end-to-end reproduction takes about
+7 GPU-hours on NVIDIA T4 or about 2 GPU-hours on A100, plus roughly
+30 minutes of CPU time for figures, tables, and metadata validation.
+The smoke-only path runs a CPU mini-panel integration test.
 
 \paragraph{Anonymized release.} The supplementary materials contain
 \texttt{scripts/reproduce\_all.sh} for single-command end-to-end

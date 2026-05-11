@@ -14,13 +14,18 @@ Supports:
 
 import numpy as np
 import pandas as pd
+from collections import defaultdict
+import warnings
 
 from src.models import (
     equal_weight, min_variance, mean_variance, hrp_allocation,
     risk_parity, max_diversification, ledoit_wolf_cov,
 )
 from src.training import dhrp_weights
-from src.data import get_universe_config
+from src.data import (
+    get_universe_config, compute_returns, make_features,
+    aggregate_text_per_timestep, get_macro_vector,
+)
 
 # Default backtest parameters
 TRAIN_DAYS = 252
@@ -57,6 +62,8 @@ def rolling_backtest(
     oos_start=None,
     universe=None,
     weight_ema=0.0,
+    strict_methods=None,
+    return_diagnostics=False,
 ):
     """Run rolling-window backtest over all methods.
 
@@ -84,6 +91,8 @@ def rolling_backtest(
         weight_ema: EMA smoothing factor for neural method weights (0=no smoothing,
                     0.3=blend 30% new + 70% old). Reduces turnover. Only applies to
                     DHRP, LLM_DHRP, MLP, Transformer, PPO.
+        strict_methods: methods whose failures should raise immediately.
+        return_diagnostics: if True, return fallback/failure counts with results.
     Returns:
         DataFrame with columns [method, date, return]
         If return_weights=True, returns (results_df, weights_history)
@@ -119,10 +128,15 @@ def rolling_backtest(
     # dropna(how="all") keeps the full 10-year span even if one asset has a
     # late inception (e.g. CPER in Commodities). Per-asset NaNs are zeroed by
     # the .fillna(0) on the train/test slices below.
-    rets = prices.pct_change().dropna(how="all")
+    rets = compute_returns(prices, how="all")
     results = []
     weights_history = []
     prev_weights = {}
+    fallback_counts = defaultdict(int)
+    failure_counts = defaultdict(int)
+    failure_details = []
+    strict_methods = set(strict_methods or [])
+    neural_methods = {"DHRP", "LLM_DHRP", "MLP", "Transformer", "PPO", "DFL"}
     rebalance_idx = 0
 
     # Determine OOS start index
@@ -202,43 +216,90 @@ def rolling_backtest(
                 )
                 if w is None:
                     continue
+                w = np.asarray(w, dtype=float).reshape(-1)
+                if len(w) != len(keep_assets):
+                    raise ValueError(
+                        f"{m} returned {len(w)} weights for {len(keep_assets)} assets"
+                    )
+                w_ser = pd.Series(w, index=keep_assets).replace([np.inf, -np.inf], np.nan)
+                w_ser = w_ser.fillna(0.0).clip(lower=0.0)
+                if w_ser.sum() <= 0:
+                    fallback_counts[m] += 1
+                    raise ValueError(f"{m} returned non-positive or all-zero weights")
+                w_ser = w_ser / w_ser.sum()
 
                 # EMA weight smoothing for neural methods to reduce turnover
-                neural_methods = {"DHRP", "LLM_DHRP", "MLP", "Transformer", "PPO"}
                 if weight_ema > 0 and m in neural_methods and m in prev_weights:
-                    w = (1 - weight_ema) * w + weight_ema * prev_weights[m]
-                    w = w / w.sum()  # re-normalize
+                    prev_current = prev_weights[m].reindex(w_ser.index, fill_value=0.0)
+                    w_ser = (1 - weight_ema) * w_ser + weight_ema * prev_current
+                    w_ser = w_ser.clip(lower=0.0)
+                    if w_ser.sum() <= 0:
+                        fallback_counts[m] += 1
+                        raise ValueError(f"{m} EMA smoothing produced zero weights")
+                    w_ser = w_ser / w_ser.sum()
 
                 # Record weights for turnover analysis
                 if return_weights:
                     weights_history.append({
                         "method": m,
                         "date": rets.index[t],
-                        "weights": w.tolist(),
+                        "assets": list(w_ser.index),
+                        "weights": w_ser.values.tolist(),
                     })
 
                 # Transaction cost adjustment
                 tc_drag = 0.0
                 if transaction_cost_bps > 0 and m in prev_weights:
-                    turnover = np.sum(np.abs(w - prev_weights[m]))
+                    union = w_ser.index.union(prev_weights[m].index)
+                    turnover = np.abs(
+                        w_ser.reindex(union, fill_value=0.0)
+                        - prev_weights[m].reindex(union, fill_value=0.0)
+                    ).sum()
                     tc_drag = turnover * transaction_cost_bps / 10000
-                prev_weights[m] = w.copy()
+                prev_weights[m] = w_ser.copy()
 
-                daily_rs = (test.values @ w).flatten()
+                daily_rs = (test[w_ser.index].values @ w_ser.values).flatten()
                 n_days = len(daily_rs)
                 for i, r in enumerate(daily_rs):
                     # Amortize tc drag over the days actually recorded,
                     # not the full test_days (which may exceed step_days).
                     adj_r = float(r) - (tc_drag / max(n_days, 1) if i == 0 else 0)
                     results.append({"method": m, "date": test.index[i], "return": adj_r})
-            except Exception:
-                pass
+            except Exception as exc:
+                failure_counts[m] += 1
+                failure_details.append({
+                    "method": m,
+                    "date": rets.index[t],
+                    "error": f"{type(exc).__name__}: {exc}",
+                })
+                if m in strict_methods:
+                    raise RuntimeError(f"rolling_backtest failed for strict method {m} at {rets.index[t]}") from exc
+                warnings.warn(
+                    f"rolling_backtest skipped {m} at {rets.index[t]}: {exc}",
+                    RuntimeWarning,
+                    stacklevel=2,
+                )
 
         rebalance_idx += 1
 
     results_df = pd.DataFrame(results)
+    diagnostics = {
+        "fallback_counts": dict(fallback_counts),
+        "failure_counts": dict(failure_counts),
+        "failure_details": failure_details,
+    }
+    for method in strict_methods:
+        if diagnostics["fallback_counts"].get(method, 0):
+            raise AssertionError(f"{method} had fallback weight computations")
+        if diagnostics["failure_counts"].get(method, 0):
+            raise AssertionError(f"{method} had failed weight computations")
+
+    if return_weights and return_diagnostics:
+        return results_df, weights_history, diagnostics
     if return_weights:
         return results_df, weights_history
+    if return_diagnostics:
+        return results_df, diagnostics
     return results_df
 
 
@@ -257,8 +318,6 @@ def multiseed_backtest(prices, models_by_seed, is_em=False, methods=None,
     Returns:
         DataFrame with columns [Method, Sharpe_mean, Sharpe_std, Sortino_mean, ...]
     """
-    from .statistics import compute_stats
-
     all_stats = []
     for seed_models in models_by_seed:
         res = rolling_backtest(
@@ -295,6 +354,14 @@ def _compute_weights(
     volume=None,
 ):
     """Compute portfolio weights for a given method."""
+    n_assets = train_rets.shape[1]
+
+    def _check_model(method_name, model):
+        if model is None:
+            return
+        if hasattr(model, "n_assets") and model.n_assets != n_assets:
+            raise ValueError(f"{method_name} model expects {model.n_assets} assets, got {n_assets}")
+
     if method == "EW":
         return equal_weight(mu, cov)
     elif method == "MINVAR":
@@ -308,8 +375,10 @@ def _compute_weights(
     elif method == "MAXDIV":
         return max_diversification(mu, cov)
     elif method == "DHRP" and dhrp_model is not None:
+        _check_model(method, dhrp_model)
         return dhrp_weights(dhrp_model, train_rets, is_em, volume=volume)
     elif method == "LLM_DHRP" and llm_dhrp_model is not None:
+        _check_model(method, llm_dhrp_model)
         return _llm_dhrp_weights(
             llm_dhrp_model, train_rets, is_em,
             text_features, macro_features,
@@ -317,12 +386,16 @@ def _compute_weights(
             volume=volume,
         )
     elif method == "MLP" and mlp_model is not None:
+        _check_model(method, mlp_model)
         return dhrp_weights(mlp_model, train_rets, is_em, volume=volume)
     elif method == "Transformer" and transformer_model is not None:
+        _check_model(method, transformer_model)
         return dhrp_weights(transformer_model, train_rets, is_em, volume=volume)
     elif method == "PPO" and ppo_model is not None:
+        _check_model(method, ppo_model)
         return dhrp_weights(ppo_model, train_rets, is_em, volume=volume)
     elif method == "DFL" and dfl_model is not None:
+        _check_model(method, dfl_model)
         return dhrp_weights(dfl_model, train_rets, is_em, volume=volume)
     return None
 
@@ -335,62 +408,52 @@ def _llm_dhrp_weights(
 ):
     """Compute LLM-DHRP portfolio weights."""
     import torch
-    from ..data.feature_engineering import make_features
+    device = next(model.parameters()).device
+    if hasattr(model, "n_assets") and model.n_assets != rets.shape[1]:
+        raise ValueError(f"LLM_DHRP model expects {model.n_assets} assets, got {rets.shape[1]}")
+    cov = (rets.cov().values * 252).astype(np.float32)
+    if is_em:
+        cov += np.eye(cov.shape[0]) * 0.01
+    feat = make_features(rets, model.feature_dim, is_em, volume=volume).astype(np.float32)
 
-    try:
-        device = next(model.parameters()).device
-        cov = (rets.cov().values * 252).astype(np.float32)
-        if is_em:
-            cov += np.eye(cov.shape[0]) * 0.01
-        feat = make_features(rets, model.feature_dim, is_em, volume=volume).astype(np.float32)
+    text_emb = None
+    if text_features is not None and model.use_text:
+        fb = text_features.get("finbert") if isinstance(text_features, dict) else None
+        if fb is not None:
+            emb = None
+            if isinstance(fb, dict):
+                if rebalance_date is not None:
+                    ts = pd.Timestamp(rebalance_date)
+                    prior = [k for k in fb.keys() if pd.Timestamp(k) <= ts]
+                    if prior:
+                        emb = fb[max(prior)]
+            elif rebalance_idx < len(fb):
+                emb = fb[rebalance_idx]
+            if emb is not None:
+                emb = np.asarray(emb)
+                if emb.ndim == 2:
+                    emb = aggregate_text_per_timestep(
+                        emb[None, ...], method="norm_mean_max_concat"
+                    )[0]
+                text_emb = torch.from_numpy(emb.astype(np.float32)).to(device)
 
-        text_emb = None
-        if text_features is not None and model.use_text:
-            fb = text_features.get("finbert") if isinstance(text_features, dict) else None
-            if fb is not None:
-                emb = None
-                # Date-keyed PIT lookup: dict[Timestamp, (n_assets, 768)].
-                # Use the most recent prior date to enforce point-in-time.
-                if isinstance(fb, dict):
-                    if rebalance_date is not None:
-                        ts = pd.Timestamp(rebalance_date)
-                        prior = [k for k in fb.keys() if pd.Timestamp(k) <= ts]
-                        if prior:
-                            emb = fb[max(prior)]
-                # Legacy positional ndarray: (n_rebalance, n_assets, 768).
-                elif rebalance_idx < len(fb):
-                    emb = fb[rebalance_idx]
-                if emb is not None:
-                    emb = np.asarray(emb)
-                    if emb.ndim == 2:
-                        # Match training-time aggregation: L2-norm + [mean,max] concat
-                        # Avoids the anisotropy collapse from naive mean(axis=0)
-                        from ..data.llm_features import aggregate_text_per_timestep
-                        emb = aggregate_text_per_timestep(
-                            emb[None, ...], method="norm_mean_max_concat"
-                        )[0]
-                    text_emb = torch.from_numpy(emb.astype(np.float32)).to(device)
+    macro_feat = None
+    if macro_features is not None and model.use_macro and rebalance_date is not None:
+        macro_feat = get_macro_vector(macro_features, rebalance_date)
+        macro_feat = torch.from_numpy(macro_feat).to(device)
 
-        macro_feat = None
-        if macro_features is not None and model.use_macro and rebalance_date is not None:
-            from ..data.fred_loader import get_macro_vector
-            macro_feat = get_macro_vector(macro_features, rebalance_date)
-            macro_feat = torch.from_numpy(macro_feat).to(device)
+    with torch.no_grad():
+        w = model(
+            torch.from_numpy(np.nan_to_num(feat)).to(device),
+            torch.from_numpy(np.nan_to_num(cov)).to(device),
+            text_emb=text_emb,
+            macro_feat=macro_feat,
+        ).cpu().numpy()
 
-        with torch.no_grad():
-            w = model(
-                torch.from_numpy(np.nan_to_num(feat)).to(device),
-                torch.from_numpy(np.nan_to_num(cov)).to(device),
-                text_emb=text_emb,
-                macro_feat=macro_feat,
-            ).cpu().numpy()
-
-        w = np.nan_to_num(np.clip(w, 0, 1))
-        return w / w.sum() if w.sum() > 0 else np.ones(len(w)) / len(w)
-    except Exception as e:
-        import warnings
-        warnings.warn(f"_llm_dhrp_weights failed: {e}")
-        return np.ones(rets.shape[1]) / rets.shape[1]
+    w = np.nan_to_num(np.clip(w, 0, 1))
+    if w.sum() <= 0:
+        raise ValueError("LLM_DHRP returned non-positive weight sum")
+    return w / w.sum()
 
 # ====================================================================
 # Module: factor_analysis.py
@@ -809,77 +872,78 @@ def jobson_korkie_test(r_a, r_b, rf=0.03):
     return float(z), float(p)
 
 
-def sharpe_difference_test(results, method_a="DHRP", method_b="HRP", n_boot=1000, rf=0.03):
-    """Test for Sharpe ratio difference between two methods.
+def _stationary_bootstrap_indices(n, avg_block_len, rng):
+    p = 1.0 / max(float(avg_block_len), 1.0)
+    idx = np.empty(n, dtype=int)
+    idx[0] = rng.integers(0, n)
+    for t_idx in range(1, n):
+        if rng.random() < p:
+            idx[t_idx] = rng.integers(0, n)
+        else:
+            idx[t_idx] = (idx[t_idx - 1] + 1) % n
+    return idx
 
-    Combines: (1) Jobson-Korkie HAC-corrected parametric test (Memmel 2003),
-    (2) stationary block bootstrap with proper centered p-value.
-    """
-    ser_a = results[results["method"] == method_a].set_index("date")["return"]
-    ser_b = results[results["method"] == method_b].set_index("date")["return"]
-    merged = pd.concat([ser_a.rename("A"), ser_b.rename("B")], axis=1).dropna()
+
+def sharpe_difference_test(results, method_a="DHRP", method_b="HRP", n_boot=1000,
+                           rf=0.03, avg_block_len=None, seed=42):
+    """Paired stationary-bootstrap test for a Sharpe-ratio difference."""
+    ser_a = (
+        results[results["method"] == method_a]
+        .groupby("date")["return"].mean()
+        .rename("A")
+    )
+    ser_b = (
+        results[results["method"] == method_b]
+        .groupby("date")["return"].mean()
+        .rename("B")
+    )
+    merged = pd.concat([ser_a, ser_b], axis=1).dropna().sort_index()
+    if len(merged) < 30:
+        raise ValueError(f"Need >=30 paired dates; got {len(merged)}")
 
     r_a, r_b = merged["A"].values, merged["B"].values
     n = len(r_a)
+    if avg_block_len is None:
+        avg_block_len = max(5, int(round(n ** (1 / 3))))
+
     sr_a = compute_sharpe(r_a, rf)
     sr_b = compute_sharpe(r_b, rf)
     actual_diff = sr_a - sr_b
+    rng = np.random.default_rng(seed)
 
-    # Paired t-test on returns
-    t_paired, p_paired = ttest_rel(r_a, r_b)
+    sharpe_diffs = np.empty(n_boot, dtype=float)
+    for j in range(n_boot):
+        idx = _stationary_bootstrap_indices(n, avg_block_len, rng)
+        sharpe_diffs[j] = compute_sharpe(r_a[idx], rf) - compute_sharpe(r_b[idx], rf)
 
-    # Jobson-Korkie / Memmel parametric test
-    jk_z, jk_p = jobson_korkie_test(r_a, r_b, rf=rf)
-
-    # Stationary block bootstrap on paired observations (preserves correlation)
-    np.random.seed(42)
-    bl = max(5, int(n ** (1 / 3)))
-    sharpe_diffs = []
-    for _ in range(n_boot):
-        # Block bootstrap indices
-        n_blocks = n // bl + 1
-        starts = np.random.randint(0, n - bl + 1, n_blocks)
-        idx = np.concatenate([np.arange(s, s + bl) for s in starts])[:n]
-        sr_a_b = compute_sharpe(r_a[idx], rf)
-        sr_b_b = compute_sharpe(r_b[idx], rf)
-        sharpe_diffs.append(sr_a_b - sr_b_b)
-    sharpe_diffs = np.array(sharpe_diffs)
     ci_lo, ci_hi = np.percentile(sharpe_diffs, [2.5, 97.5])
+    p_boot = 2 * min(np.mean(sharpe_diffs <= 0.0), np.mean(sharpe_diffs >= 0.0))
+    p_boot = float(min(max(p_boot, 1.0 / n_boot), 1.0))
 
-    # Correct two-sided bootstrap p-value: center distribution at H0 (=0)
-    # then compute fraction at least as extreme as observed
-    centered = sharpe_diffs - sharpe_diffs.mean()
-    p_boot = float(np.mean(np.abs(centered) >= abs(actual_diff)))
-    p_boot = max(p_boot, 1.0 / n_boot)  # never report exact 0
-
-    # Use the more powerful of JK and bootstrap as the primary p-value
-    # (both are valid; JK is parametric and tighter for clean returns)
-    primary_p = jk_p if not np.isnan(jk_p) else p_boot
-
-    # Cohen's d effect size
     diff_returns = r_a - r_b
-    cohens_d = diff_returns.mean() / (diff_returns.std() + 1e-12)
-
-    # Information ratio of the difference
-    ir = (diff_returns.mean() * 252) / (diff_returns.std() * np.sqrt(252)) if diff_returns.std() > 0 else 0
+    diff_std = diff_returns.std(ddof=1)
+    ir = (
+        diff_returns.mean() * 252 / (diff_std * np.sqrt(252))
+        if diff_std > 0 else np.nan
+    )
+    cohens_d = diff_returns.mean() / (diff_std + 1e-12)
 
     return {
         "method_a": method_a,
         "method_b": method_b,
+        "n_dates": n,
         "sharpe_a": sr_a,
         "sharpe_b": sr_b,
         "sharpe_diff": actual_diff,
-        "bootstrap_ci_lo": ci_lo,
-        "bootstrap_ci_hi": ci_hi,
-        "bootstrap_se": sharpe_diffs.std(),
+        "bootstrap_ci_lo": float(ci_lo),
+        "bootstrap_ci_hi": float(ci_hi),
+        "bootstrap_se": float(sharpe_diffs.std(ddof=1)),
         "bootstrap_p": p_boot,
-        "jk_z": jk_z,
-        "jk_p": jk_p,
-        "primary_p": primary_p,
-        "paired_t": t_paired,
-        "paired_p": p_paired,
-        "information_ratio": ir,
-        "cohens_d": cohens_d,
+        "bootstrap_p_approx": p_boot,
+        "primary_p": p_boot,
+        "avg_block_len": avg_block_len,
+        "information_ratio": float(ir),
+        "cohens_d": float(cohens_d),
     }
 
 
@@ -972,8 +1036,8 @@ def diebold_mariano_test(results, method_a="DHRP", method_b="HRP", loss_fn="squa
 def pairwise_sharpe_tests(results, ref="DHRP", n_boot=1000, rf=0.03, correction="holm"):
     """Run pairwise Sharpe difference tests between ref and all other methods.
 
-    Uses Jobson-Korkie/Memmel parametric test as primary (more powerful than
-    naive bootstrap for moderate samples), with Holm-Bonferroni correction.
+    Uses paired stationary-bootstrap Sharpe differences as the declared
+    primary test, with Holm-Bonferroni correction by default.
     """
     methods = sorted(results["method"].unique())
     if ref not in methods:
@@ -986,7 +1050,6 @@ def pairwise_sharpe_tests(results, ref="DHRP", n_boot=1000, rf=0.03, correction=
             res = sharpe_difference_test(results, method_a=ref, method_b=other,
                                          n_boot=n_boot, rf=rf)
             rows.append(res)
-            # Prefer Jobson-Korkie (more powerful) over naive bootstrap
             raw_ps.append(res.get("primary_p", res["bootstrap_p"]))
         except Exception:
             continue
