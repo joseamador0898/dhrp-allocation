@@ -33,7 +33,8 @@ FORBIDDEN_PATTERNS = [
 ]
 
 DEANONYMIZING_REGEXES = [
-    (r"\b[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}\b", "email-like"),
+    # exclude git SSH remote prefixes like git@github.com
+    (r"\b[a-zA-Z0-9._%+-]+@(?!github\.com|gitlab\.com|bitbucket\.org)[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}\b", "email-like"),
     (r"github\.com[/:](?!anonymous|orgs/anonymous)[\w.-]+", "github-user-url"),
     (r"linkedin\.com/in/[\w-]+", "linkedin-url"),
     (r"[Cc]:[/\\]+Users[/\\]+(?!<|placeholder)[\w.-]+", "windows-user-path"),
