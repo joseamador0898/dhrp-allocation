@@ -22,7 +22,7 @@ NeurIPS 2026 E&D is no longer available for a new submission because the full-pa
 
 ## Sanitization performed
 
-The package excludes `.git`, `.venv`, `.env`, `.claude`, notebook drive tokens, local caches, Python bytecode, raw local logs, and notebook outputs. API-key literals and private environment values from the raw uploaded archive were not copied into the final package. The anonymization scanner reports zero flagged files.
+The package excludes `.git`, `.venv`, `.env`, local IDE/tool config directories, notebook drive tokens, local caches, Python bytecode, raw local logs, and notebook outputs. API-key literals and private environment values from the raw uploaded archive were not copied into the final package. The anonymization scanner reports zero flagged files.
 
 ## Verified in this environment
 

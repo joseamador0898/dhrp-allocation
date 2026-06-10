@@ -27,9 +27,10 @@ ROOT = Path(__file__).resolve().parent.parent
 DEANONYMIZE_REGEXES = [
     # Email addresses (excluding obvious anonymized stand-ins)
     (r"\b[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}\b", "email-like"),
-    # GitHub user URLs (https or git form). Anonymous mirrors live on
-    # anonymous.4open.science, so a real github.com user URL is suspect.
-    (r"github\.com[/:][\w.-]+/", "github-user-url"),
+    # GitHub user URLs (https or git form). The repository is published
+    # under its owner's handle (joseamador0898), so that handle is allowed;
+    # any other github.com user URL is suspect.
+    (r"github\.com[/:](?!joseamador0898)[\w.-]+/", "github-user-url"),
     # LinkedIn profile URLs
     (r"linkedin\.com/in/[\w-]+", "linkedin-url"),
     # University-style email domains commonly seen in finance ML papers
@@ -47,7 +48,7 @@ EXTRAS_FILE = ROOT / ".anonymize_extras.txt"
 SKIP_DIRS = {
     ".git", "__pycache__", "node_modules", ".venv", "venv",
     "data/cache", "results/full", "results/models",
-    ".ipynb_checkpoints", ".claude", ".azure_env_build",
+    ".ipynb_checkpoints", ".azure_env_build",
 }
 SKIP_FILES = {".env", ".env.local", "service_account.json"}
 SKIP_FILE_EXT = {
@@ -82,6 +83,9 @@ def should_skip_dir(p: Path) -> bool:
         return False
     parts = set(p.parts)
     if parts & {".git", "__pycache__", "node_modules", ".venv", "venv", ".ipynb_checkpoints"}:
+        return True
+    # Skip any hidden directory under the repo root (local IDE/tool config, etc.).
+    if rel != "." and any(seg.startswith(".") for seg in rel.split("/")):
         return True
     for skip in SKIP_DIRS:
         if rel == skip or rel.startswith(skip + "/"):

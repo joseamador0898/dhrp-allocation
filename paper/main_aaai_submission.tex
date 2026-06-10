@@ -16,7 +16,8 @@
 %   NOTE: Do NOT modify aaai2026.sty -- AAAI prohibits any modification.
 %
 % Build:
-%   pdflatex main_aaai ; bibtex main_aaai ; pdflatex main_aaai ; pdflatex main_aaai
+%   pdflatex main_aaai_submission ; bibtex main_aaai_submission ; \
+%     pdflatex main_aaai_submission ; pdflatex main_aaai_submission
 %
 % Submission options:
 %   [submission]   : anonymous (hides author block) -- USE THIS FOR SUBMISSION
@@ -61,137 +62,161 @@ Independent Researcher}
 \maketitle
 
 \begin{abstract}
-We introduce \textbf{DHRP}, a differentiable extension of Hierarchical Risk
-Parity \citep{LopezdePrado2016} that replaces hard agglomerative clustering
-and recursive bisection with a temperature-scaled soft-gating tree, and
-\textbf{DHRP-8}, the first multi-universe portfolio benchmark reporting
-Probabilistic Sharpe Ratios \citep{Bailey2012PSR} and Fama--French factor
-alphas under 10-seed protocols across eight ETF asset classes.
-DHRP achieves out-of-sample Sharpe ratios of $\mathbf{1.304 \pm 0.10}$ on
-commodities ($\text{PSR}=0.999$) and $\mathbf{1.290 \pm 0.05}$ on crypto
-($\text{PSR}=0.991$), beating classical HRP in six of eight universes.
-Fama--French 3-factor alpha on commodities is $6.3\%$ ($t=1.58$, not
-significant), so the strongest claim is robust positive sample Sharpe rather
-than significant factor alpha. DHRP underperforms mean-variance in
-equity-heavy universes where factor exposures dominate.
-Cross-modal LLM augmentation via FinBERT \citep{Huang2023} embeddings
-provides \emph{no statistical benefit} under multi-seed reporting,
-regressing $-0.57$ Sharpe in commodities and $-0.21$ in developed markets.
-This honest negative ablation joins a growing benchmark literature
-\citep{Tan2024AreLMs,Chen2025StockBench} cautioning against single-seed
-LLM-finance claims. We release the 8-universe dataset (Croissant~1.1
-metadata), multi-seed checkpoints, and a single-command reproduction pipeline.
+Hierarchical Risk Parity (HRP) builds portfolios through agglomerative
+clustering and recursive bisection, two discrete operations that block
+gradient flow and keep HRP outside end-to-end learning pipelines. We
+introduce DHRP, a differentiable relaxation that replaces hard clustering
+with a temperature-scaled soft-gating binary tree, a learned
+asset-to-leaf assignment, and an inverse-volatility blend, trained
+jointly against a multi-objective utility with an HRP-anchored
+regularizer. We evaluate on DHRP-8, a new benchmark covering eight ETF
+universes, eight headline allocators, and ten seeds, with Probabilistic
+Sharpe Ratios, factor alphas, SPA and MCS tests, transaction-cost curves,
+and Croissant metadata. DHRP achieves the best out-of-sample Sharpe in
+commodities (1.304, PSR 0.999) and crypto (1.290, PSR 0.991) and beats
+classical HRP in six of eight universes. A FinBERT text extension,
+LLM-DHRP, gives no statistical benefit and regresses in two of three
+text-covered universes; we report this negative result in full.
 \end{abstract}
 
 
 \section{Introduction}
 \label{sec:intro}
 
-Portfolio optimization sits at the intersection of statistical estimation
-and constrained decision-making. Mean--variance optimization
-\citep{Markowitz1952} is fragile to estimation error
-\citep{DeMiguel2009,Ledoit2004}; Hierarchical Risk Parity (HRP)
-\citep{LopezdePrado2016} sidesteps this by routing capital down a binary
-tree built from agglomerative clustering of correlation distances. HRP
-has become a practitioner standard, but its hard clustering and
-recursive bisection are non-differentiable, blocking joint training
-with upstream feature extractors. Differentiable optimization layers
-\citep{Amos2017,Agrawal2019,Bolte2021,Pan2024BPQP}, soft decision trees
-\citep{FrosstHinton2017,Popov2020NODE,Mao2025DiffTree}, and gated
-mixture-of-experts \citep{Shazeer2017} have shown that hierarchical
-routing can be made differentiable while retaining the inductive bias
-that makes trees interpretable.
+Mean-variance optimization \citep{Markowitz1952} remains the canonical
+formulation of portfolio choice, but its weights are sensitive to
+estimation error, to the point that the naive 1/N rule is hard to beat
+out of sample \citep{DeMiguel2009}. Hierarchical Risk Parity
+\citep{LopezdePrado2016} sidesteps covariance inversion entirely: it
+clusters assets by correlation distance and then splits risk down the
+resulting dendrogram by recursive bisection. The recipe is simple,
+stable under noisy covariance estimates \citep{Raffinot2018}, and widely
+deployed. It is also frozen. Both the clustering and the bisection are
+discrete, so no gradient can pass through them, and HRP cannot be trained
+jointly with upstream feature extractors or tuned against a downstream
+objective.
 
-We bring these architectures to portfolio allocation. \textbf{DHRP}
-replaces HRP's clustering and bisection with a temperature-scaled
-soft-gating tree, enabling end-to-end gradient training while retaining
-an HRP-like inductive bias. It is an HRP-inspired differentiable
-relaxation; we do not claim the hard-routing limit reproduces the full
-classical HRP algorithm. We evaluate eight headline methods across
-\textbf{eight asset universes} with multi-seed reporting (10 seeds,
-mean$\pm$std, Probabilistic Sharpe Ratios) and Fama--French factor
-alphas. We also test cross-modal LLM augmentation (LLM-DHRP)
-fusing FinBERT \citep{Huang2023} embeddings of asset-attributed news,
-and find that text augmentation provides \emph{no statistical lift}
-under multi-seed reporting---joining a growing benchmark literature
-\citep{Tan2024AreLMs,Chen2025StockBench,Xie2024FinBen} that cautions
-against single-seed claims of LLM benefit in finance.
+A growing body of work makes optimization layers differentiable, from
+quadratic programs \citep{Amos2017} to general convex programs
+\citep{Agrawal2019} and end-to-end mean-variance solvers
+\citep{Pan2024BPQP}, yet hierarchical allocators have been left out of
+this development. We close the gap with DHRP, which replaces HRP's two
+discrete stages with a temperature-scaled soft-gating binary tree and a
+learned soft assignment of assets to leaves, blended with
+inverse-volatility weights and trained end to end. An HRP regularizer
+warm-starts the model from classical HRP weights and anneals over
+training; ablations show it is load-bearing. We frame DHRP as an
+HRP-inspired relaxation rather than an exact differentiable clone, and we
+state precisely where the correspondence breaks.
+
+Evaluation practice in deep portfolio research is a second gap. Many
+papers report a single seed on a single universe, even though seed
+variance in neural allocators can exceed the gaps between methods, a
+problem documented for ML benchmarks more broadly
+\citep{Reuel2024BetterBench}. We therefore release DHRP-8: eight ETF
+universes, eight headline allocators plus four supplementary deep
+baselines, ten seeds per neural method, and a five-family statistical
+battery built around the Probabilistic Sharpe Ratio \citep{Bailey2012PSR},
+factor alphas, and the SPA and MCS multi-method tests
+\citep{Hansen2005,HansenLundeNason2011}.
+
+Finally, we test the obvious next step honestly. LLM-DHRP fuses a FinBERT
+summary of asset-attributed news \citep{Huang2023} into the tree through
+a gated residual. Under ten-seed reporting it delivers no statistical
+benefit and regresses in two of the three universes with text coverage.
+Rather than tuning until the number turns positive, we report the failure
+and diagnose its mechanisms, joining recent benchmarks that find LLM
+components add little to quantitative trading and forecasting
+\citep{Tan2024AreLMs,Chen2025StockBench,Xie2024FinBen}.
 
 \paragraph{Contributions.}
-\begin{enumerate}\itemsep0.05em
-\item \textbf{DHRP architecture:} a
-  temperature-scaled soft-gating tree that provides a differentiable
-  HRP-like allocation bias without asserting exact classical-HRP
-  equivalence.
-\item \textbf{DHRP-8 benchmark:} an
-  8-universe portfolio evaluation framework (DM, EM, commodities,
-  sectors, global multi-asset, factors, crypto, bonds) with eight
-  headline methods, 12 implemented allocators, 10-seed reporting, PSR,
-  Fama--French factor alphas, transaction-cost sensitivity, and
-  Croissant~1.1 metadata.
-\item \textbf{Empirical findings:} DHRP achieves PSR $> 0.99$ on commodities
-  ($1.30 \pm 0.10$ Sharpe) and crypto ($1.29 \pm 0.05$), beats
-  classical HRP in six of eight universes, and ties or beats all classical
-  baselines in DM. Mean-variance dominates equity-heavy global
-  multi-asset. LLM augmentation regresses ($-0.21$ Sharpe in DM,
-  $-0.57$ in commodities) under multi-seed reporting.
-\end{enumerate}
+\begin{itemize}\itemsep0.05em
+\item \textbf{DHRP}, a fully differentiable HRP-inspired allocator built
+  from a soft-gating binary tree, a learned asset-to-leaf assignment, and
+  an inverse-volatility blend, anchored by an annealed HRP regularizer.
+  It beats classical HRP in six of eight universes and attains the best
+  Sharpe in commodities ($1.304 \pm 0.095$, PSR 0.999) and crypto
+  ($1.290 \pm 0.052$, PSR 0.991).
+\item \textbf{DHRP-8}, a multi-universe benchmark with ten-seed error
+  bars, PSR, Fama-French alphas, SPA and MCS tests, transaction-cost
+  sensitivity, and Croissant 1.1 metadata, released with frozen
+  dependencies and a single-command reproduction script.
+\item \textbf{An honest negative ablation.} LLM-DHRP, a FinBERT-augmented
+  variant, shows no statistically reliable gain, and we trace the failure
+  to news coverage sparsity, embedding anisotropy that survives temporal
+  aggregation, and warm-start instability.
+\end{itemize}
 
 
 \section{Related Work}
 \label{sec:related}
 
 \paragraph{HRP and differentiable optimization.}
-HRP \citep{LopezdePrado2016} replaces inverse-covariance MV with
-single-linkage agglomerative clustering and recursive bisection, with
-extensions to alternative linkages \citep{Raffinot2018} and risk-parity
-budgeting \citep{Roncalli2013}. Differentiable optimization layers
-\citep{Amos2017,Agrawal2019,Bolte2021} embed structured decision-making
-in neural networks; BPQP \citep{Pan2024BPQP} applies this to mean--variance
-portfolios with end-to-end Sharpe training, and \citet{Lin2024MSparse}
-solve $m$-sparse Sharpe with theoretical guarantees. DHRP imposes
-HRP's hierarchical inductive bias instead of solving a generic convex
-program, which empirically wins in low-correlation regimes
-(Results section).
+HRP \citep{LopezdePrado2016} and its linkage variants \citep{Raffinot2018}
+belong to the risk-budgeting family alongside equal risk contribution
+\citep{Maillard2010,Roncalli2013} and maximum diversification
+\citep{Choueifaty2008}; all aim to avoid the estimation fragility of
+mean-variance weights \citep{Markowitz1952,Ledoit2004,DeMiguel2009}.
+Differentiable optimization layers \citep{Amos2017,Agrawal2019,Bolte2021}
+have reached portfolio construction through end-to-end mean-variance
+backpropagation \citep{Pan2024BPQP} and m-sparse Sharpe maximization
+\citep{Lin2024MSparse}, but hierarchical allocation has remained outside
+this toolkit. Closest to us is concurrent work embedding HRP in a
+reinforcement-learning loop with Bayesian sector shrinkage
+\citep{KangTian2025RLBHRP}. That approach keeps the HRP computation hard
+and learns around it with RL, and it is evaluated on US equities only;
+DHRP instead makes the hierarchy itself differentiable, trains by plain
+gradient descent, and is benchmarked across eight asset classes.
 
 \paragraph{Soft trees and decision-focused learning.}
-Soft decision trees \citep{FrosstHinton2017,Popov2020NODE,Hazimeh2020TreeEnsemble}
-and gated mixture-of-experts \citep{Shazeer2017} demonstrate that
-hierarchical routing can be made differentiable. \citet{Mao2025DiffTree}
-provide a recent NeurIPS spotlight on differentiable trees via
-ReLU+Argmin reformulation. Decision-focused learning
-\citep{Wilder2019,Elmachtoub2022SPO,Donti2017} optimizes prediction for
-the downstream optimization task; recent finance applications include
-deep declarative risk budgeting \citep{ParraDiaz2025} and decision-
-focused minimum-variance \citep{KimLee2025DFL}. DHRP is decision-
-focused by construction.
+Our gating tree descends from soft decision trees \citep{FrosstHinton2017},
+oblivious neural ensembles \citep{Popov2020NODE}, differentiable tree
+ensembles \citep{Hazimeh2020TreeEnsemble}, and sparsely gated mixtures of
+experts \citep{Shazeer2017}; differentiable tree structures remain an
+active topic \citep{Mao2025DiffTree}. Training allocation weights against
+a downstream financial objective places DHRP within decision-focused
+learning \citep{Wilder2019,Elmachtoub2022SPO,Donti2017}, where recent
+portfolio instances include deep declarative risk budgeting
+\citep{ParraDiaz2025} and decision-focused minimum variance
+\citep{KimLee2025DFL}.
 
 \paragraph{LLMs in finance and benchmark precedents.}
-FinBERT \citep{Huang2023}, BloombergGPT \citep{Wu2023BloombergGPT}, and
-sentiment-augmented RL \citep{Kirtac2025} explore LLM-portfolio fusion.
-However, recent benchmark papers consistently document that LLM
-competence on text tasks does not transfer to financial decisions:
-StockBench \citep{Chen2025StockBench} shows most LLM agents fail to
-beat buy-and-hold; FinBen \citep{Xie2024FinBen} finds LLM weakness in
-forecasting; \citet{Tan2024AreLMs} (NeurIPS 2024 Spotlight) show that
-removing the LLM component improves time-series forecasting. Our
-LLM-DHRP ablation extends this evidence
-to hierarchical portfolio allocation.
+Domain language models such as FinBERT \citep{Araci2019,Huang2023} and
+BloombergGPT \citep{Wu2023BloombergGPT} have fueled text-augmented trading
+systems, though reported gains are often single-seed \citep{Kirtac2025}
+and deserve caution. A recent wave of benchmarks reaches sobering
+conclusions: most LLM trading agents fail to beat buy-and-hold
+\citep{Chen2025StockBench}, LLMs are weak financial forecasters
+\citep{Xie2024FinBen}, removing the LLM component can improve time-series
+models outright \citep{Tan2024AreLMs}, and live prediction-market
+evaluation is similarly mixed \citep{Cheng2026PolyBench}. Our negative
+ablation adds a multi-seed portfolio-allocation data point to this
+literature.
 
 \paragraph{Multi-seed and PSR reporting.}
-Probabilistic Sharpe Ratio \citep{Bailey2012PSR} and Deflated Sharpe
-\citep{Bailey2014DSR} correct Sharpe significance for sample size,
-non-Normality, and selection bias. Recent ML-finance work reports
-mean$\pm$std over 10--100 seeds \citep{ParraDiaz2025,Pan2024BPQP};
-BetterBench \citep{Reuel2024BetterBench} explicitly critiques benchmarks
-without multi-seed error bars. DHRP-8 adopts both standards.
+Sample Sharpe ratios overstate skill under non-normal returns and short
+samples; the Probabilistic Sharpe Ratio \citep{Bailey2012PSR} and the
+deflated Sharpe ratio \citep{Bailey2014DSR} correct for this. Benchmark
+audits also find that error bars and reproducibility metadata are
+routinely missing \citep{Reuel2024BetterBench}. DHRP-8 therefore reports
+ten-seed means with standard deviations, HAC t-statistics
+\citep{NeweyWest1987}, factor alphas \citep{FamaFrench2015,Carhart1997},
+stationary-bootstrap Sharpe-difference tests \citep{PolitisRomano1994}
+with Holm correction \citep{Holm1979} and Diebold-Mariano statistics
+\citep{DieboldMariano1995}, the SPA test \citep{Hansen2005}, model
+confidence sets \citep{HansenLundeNason2011}, and Croissant 1.1 metadata
+\citep{Akhtar2024Croissant}.
 
 
 \section{Method}
 \label{sec:method}
 
-We follow classical HRP's correlation-distance clustering and recursive risk budgeting, and present DHRP and LLM-DHRP here. The full architecture is shown in
-Figure~\ref{fig:arch}.
+DHRP maps a price feature vector $x_t$ and an annualized covariance matrix
+$\Sigma_t$ to portfolio weights through four stages: feature fusion, a
+soft-gating tree, a soft asset assignment, and an inverse-volatility
+blend. Figure~\ref{fig:arch} gives an overview; we describe each stage in
+turn.
+
 % TikZ architecture diagram for DHRP + LLM-DHRP (inlined into main.tex).
 \begin{figure*}[t]
 \centering
@@ -270,163 +295,152 @@ weights to produce portfolio weights $w \in \Delta^{n-1}$.}
 \subsection{DHRP: differentiable soft-gating tree}
 \label{sec:dhrp_layer}
 
-DHRP maps a feature vector $x_t \in \mathbb{R}^f$ and an annualized
-covariance $\Sigma_t \in \mathbb{R}^{n \times n}$ to portfolio weights
-$w_t \in \Delta^{n-1}$ via four learnable components.
-
-\paragraph{Feature fusion.}
-A covariance projection MLP $f_{\text{cov}}: \mathbb{R}^{n^2} \to \mathbb{R}^f$
-encodes the flattened normalized covariance, then layer-norm fuses with
-price features:
+Covariance information enters through a dedicated projection. A small MLP
+encodes the normalized, flattened covariance $\Sigma_t$, and the result is
+fused with the price features $x_t$ under LayerNorm to produce a hidden
+vector $h_t$. Conditioning on the full covariance, rather than on
+volatilities alone, lets the downstream gates react to changes in
+correlation structure, which is the quantity classical HRP clusters on.
 \begin{equation}
 h_t = \mathrm{LayerNorm}\left(x_t + f_{\text{cov}}\!\left(
 \mathrm{vec}(\Sigma_t)/(\|\Sigma_t\|_\infty + \epsilon)\right)\right).
 \end{equation}
 
-\paragraph{Soft-gating tree.}
-A perfect binary tree of depth $L$ has $2^L$ leaves and $2^L-1$ internal
-nodes. Each internal node $k$ has a gate $g_k: \mathbb{R}^f \to \mathbb{R}^2$
-with temperature-scaled softmax:
+The hidden vector drives a perfect binary tree of depth $L$, with $2^L$
+leaves and $2^L - 1$ internal nodes. Each internal node $k$ applies a gate
+to $h_t$ and emits a two-way temperature-scaled softmax $\pi_k$, where the
+per-node temperature $\tau_k = \exp(\theta_k)$ is clamped to $(0.1, 5.0]$.
 \begin{equation}
 \pi_k = \mathrm{softmax}(g_k(h_t) / \tau_k),
 \quad \tau_k = \exp(\theta_{\tau,k}) \in (0.1, 5.0].
 \label{eq:gates}
 \end{equation}
-Leaf budget for leaf $\ell$ along path $P_\ell$ is
-$p_\ell = \prod_{(k, b) \in P_\ell} \pi_k[b]$, normalized by a learned
-prior $\beta = \mathrm{softmax}(\theta_\beta)$:
-$b_\ell = \beta_\ell p_\ell / \sum_j \beta_j p_j$.
+A leaf's budget is the product of gate probabilities along its
+root-to-leaf path $P_\ell$, namely
+$p_\ell = \prod_{(k, b) \in P_\ell} \pi_k[b]$, renormalized by a learned
+leaf prior $\beta = \mathrm{softmax}(\theta_\beta)$ to give
+$b_\ell = \beta_\ell p_\ell / \sum_j \beta_j p_j$. Low temperatures
+sharpen the gates toward hard routing while high temperatures spread risk
+across subtrees, and the temperatures are themselves learned, so the
+network chooses how decisive each split should be.
 
-\paragraph{Soft asset assignment and volatility blending.}
-A learnable matrix $A \in \mathbb{R}^{n \times 2^L}$ row-normalizes via
-softmax; asset $i$ receives $a_i = \sum_\ell \mathrm{softmax}(A_{i,:})_\ell\, b_\ell$.
-Final weights blend with inverse-volatility:
+Leaves are not tied to fixed clusters. A learnable matrix
+$A \in \mathbb{R}^{n \times 2^L}$ with row-wise softmax distributes leaf
+budgets to assets, yielding soft allocations
+$a_i = \sum_\ell \mathrm{softmax}(A_{i,:})_\ell\, b_\ell$; the assignment
+trains jointly with the gates, so the tree discovers its own grouping
+rather than inheriting one from a linkage rule. The final weight blends
+$a_i$ with an inverse-volatility weight through a learned coefficient
+$\alpha = \sigma(\theta_\alpha)$, after which weights are clipped to be
+nonnegative and renormalized. The blend keeps the allocator near a
+sensible risk-parity baseline early in training while leaving the learned
+path free to dominate where it helps.
 \begin{equation}
 w_i = \alpha \cdot a_i + (1-\alpha) \cdot \frac{1/\sigma_i}{\sum_j 1/\sigma_j},
 \qquad \alpha = \sigma(\theta_\alpha),
 \label{eq:blend}
 \end{equation}
-followed by non-negativity clipping and re-normalization.
 
-\paragraph{Loss.}
-Multi-objective: CRRA utility, smooth Sharpe, HRP regularization
-(curriculum-scheduled $\lambda_h: 0.3 \to 0.05$ over training), risk
-penalty, concentration (HHI), and turnover penalty:
+Training minimizes a multi-objective loss: the negative of a CRRA utility,
+a smooth Sharpe term, and an entropy bonus, augmented by four penalties.
+An HRP regularizer $\lVert w - w_{\mathrm{HRP}} \rVert^2$ warm-starts the
+model from classical HRP weights, with its coefficient $\lambda_h$
+following a curriculum from 0.3 down to 0.05 so the anchor relaxes as
+training proceeds. A risk penalty $w^\top \Sigma w$, an HHI concentration
+penalty, and a turnover penalty complete the objective. The HRP term is
+load-bearing rather than decorative: removing it drops commodity Sharpe by
+$0.32 \pm 0.06$ across seeds, as the ablations below show.
 \begin{align}
 \mathcal{L} &= -(\mathrm{CRRA} + \mathrm{Sharpe} + \lambda_e \mathrm{Entropy}) \notag\\
 &\quad + \lambda_h \|w - w_{\text{HRP}}\|_2^2 + \lambda_r w^\top \Sigma w \notag\\
 &\quad + \lambda_c \mathrm{HHI}(w) + \lambda_t \mathrm{TO}(w).
 \end{align}
-The HRP regularizer warm-starts from classical HRP weights, providing
-the inductive bias that anchors the relaxation.
 
 \paragraph{Architecture scope.}
-DHRP is an HRP-inspired differentiable allocator, not a differentiable
-implementation of the full L\'opez de Prado algorithm. The implemented
-tree sends mass through temperature-scaled gates, learns soft
-asset-to-leaf assignments, and blends the resulting budget with
-inverse-volatility weights. This architecture can approximate
-HRP-like allocations when its split budgets, assignments, and
-volatility blend are constrained to match a fixed HRP solution, but its
-hard-routing limit does not generally reproduce recursive HRP
-bisection across all subtrees. Exact reproduction would require an
-architecture in which each internal node emits split budget proportions
-for both children.
-
-A row-wise entropy-regularized interpretation of the soft assignment matrix connects the assignment to the Sinkhorn literature, although our implementation enforces only row-stochasticity rather than the full bi-stochastic Sinkhorn iteration.
+DHRP is an HRP-inspired relaxation, not an exact differentiable clone of
+\citet{LopezdePrado2016}. The hard-routing limit of the gating tree does
+not reproduce recursive HRP bisection across all subtrees, and at low
+temperature the softmax gates collapse mass onto a single leaf rather than
+recovering a balanced split. What the architecture preserves is the
+inductive bias: hierarchical risk budgeting over a tree conditioned on
+correlation structure, with the HRP regularizer supplying the explicit
+anchor to the classical solution. Claims in this paper should be read
+accordingly. A row-wise entropy-regularized reading of the assignment
+matrix connects it to the Sinkhorn literature, though our implementation
+enforces only row-stochasticity rather than the full bi-stochastic
+iteration.
 
 \subsection{LLM-DHRP: text-augmented allocation}
 \label{sec:llm_dhrp_arch}
 
-LLM-DHRP augments the price pathway with a single text summary vector
-per timestep, built from per-asset news headlines. For each asset $a$
-we collect headlines within a 90-day rolling window, encode each
-headline with FinBERT \citep{Huang2023} ($d_T = 768$), and average
-headline embeddings within the asset window to obtain
-$e_{t,a}\in\mathbb{R}^{d_T}$. We normalize
-$\tilde e_{t,a}=e_{t,a}/(\|e_{t,a}\|_2+\epsilon)$ and form the global
-summary
-\[
+LLM-DHRP adds a text pathway. For each asset $a$ we collect headlines over
+a 90-day rolling window, encode each with FinBERT \citep{Huang2023} into
+768-dimensional embeddings, average within the window to obtain $e_{t,a}$,
+and L2-normalize. The per-asset vectors are then pooled into a global
+summary $u_t$ by concatenating the cross-asset mean and cross-asset max,
+\begin{equation}
 u_t =
 \left[
-\frac{1}{n}\sum_{a=1}^{n}\tilde e_{t,a};
+\frac{1}{n}\sum_{a=1}^{n}\tilde e_{t,a};\;
 \max_{a=1,\ldots,n}\tilde e_{t,a}
-\right]\in\mathbb{R}^{2d_T}.
-\]
-A TextProjection MLP maps $u_t$ to $\mathbb{R}^f$, and a gated residual
-fuses it into the price pathway:
+\right]\in\mathbb{R}^{2d_T},
+\end{equation}
+with $\tilde e_{t,a}=e_{t,a}/(\|e_{t,a}\|_2+\epsilon)$. A TextProjection
+MLP maps $u_t$ into the price feature space, and a gated residual adds it
+to $h_t$,
 \begin{equation}
-\hat h_t = h_t + g_{\text{text}} \cdot
-\mathrm{TextProj}(u_t),
+\hat h_t = h_t + g_{\text{text}} \cdot \mathrm{TextProj}(u_t),
 \quad g_{\text{text}} = \sigma(\theta_g - 1.0),
 \end{equation}
-with gate bias $-1.0$ initially suppressing text. Modality dropout
-(probability 0.1) randomly masks the text branch during training. We
-use a two-phase warm-start: phase~1 freezes price-pathway parameters
-and trains text/fusion only; phase~2 unfreezes all with reduced
-learning rate; detailed hyperparameters are given in the supplementary material.
-
-We deliberately use a global text summary rather than asset-token
-cross-attention. Per-asset headline coverage in our universes is
-sparse and skewed toward a few mega-cap names, and pilots with
-asset-token attention exhibited high seed-to-seed variance dominated by
-coverage gaps rather than text signal. The negative ablation in
-the LLM ablation section should therefore be read as a
-``does global FinBERT summary help DHRP'' result, not as a verdict on
-all possible per-asset text architectures.
+where the $-1.0$ bias suppresses text at initialization, and modality
+dropout with $p = 0.1$ keeps the price path functional without it.
+Training is two-phase: text and fusion parameters first with the price
+path frozen, then all parameters at a reduced learning rate. The global
+summary is a deliberate choice over per-asset cross-attention. News
+coverage is sparse and skewed toward mega-caps, and pilot runs with
+asset-token attention produced seed variance dominated by coverage gaps,
+so we pool text into a single market-level signal instead.
 
 
 \section{The DHRP-8 Benchmark}
 \label{sec:benchmark}
 
-DHRP-8 evaluates portfolio allocation across eight asset universes,
-eight headline methods, 12 implemented allocators, and a five-family statistical battery. Detailed protocol
-specifications and the full per-universe asset list are given in the supplementary material.
-
-\paragraph{Universes (8 total).}
-Equity: developed markets (DM, 10 ETFs), emerging markets (EM, 10), US
-sectors (10), global multi-asset (10), factor ETFs (10).
-Non-equity: commodities (10), crypto (10, post-2020 history), bonds
-(10). All ETFs are publicly traded on US exchanges with $\geq$12 years
-of daily history (crypto: 2020--2026 only).
+\paragraph{Universes.}
+Eight universes of 10 US-traded ETFs each: developed markets (DM),
+emerging markets (EM), commodities, US sectors, global multi-asset, factor
+ETFs, crypto, and bonds. All series have at least 12 years of daily
+history, except crypto, which spans 2020 to 2026.
 
 \paragraph{Methods.}
-Classical: equal-weight (EW), mean--variance (MV), minimum-variance
-(MINVAR), risk parity (RP), maximum diversification (MAXDIV),
-hierarchical risk parity (HRP). DHRP and LLM-DHRP complete the eight
-headline methods. Additional implemented allocators--MLP with
-covariance-projection, Portfolio Transformer \citep{KisielGorse2022},
-PPO, and DFL mirroring \citet{KimLee2025DFL}--are reported in
-supplementary/appendix experiments where evaluated.
+Eight headline allocators: six classical, deterministic methods (equal
+weight, mean-variance, minimum variance, risk parity, maximum
+diversification, and HRP) and two neural methods (DHRP and LLM-DHRP). Four
+further deep allocators, an MLP with covariance projection, a Portfolio
+Transformer \citep{KisielGorse2022}, PPO, and a decision-focused learner
+\citep{KimLee2025DFL}, appear in the supplement, for 12 allocators in
+total.
 
 \paragraph{Multi-seed protocol.}
-Every neural method is trained independently across $S = 10$ seeds
-$\{0, \ldots, 9\}$ and backtested over the OOS window 2020-07 to
-2026-04 with universe-specific rebalance frequency (5 days for
-commodities and crypto; 21 days otherwise). Per-method metrics are
-reported as mean$\pm$std across seeds; classical baselines are
-deterministic and reported as a single value. Models train on
-2012--2020-06 with a 5-day purge gap to prevent train/test leakage.
+Training spans April 2012 to June 2020; the out-of-sample window runs from
+July 2020 to April 2026, separated by a 5-day purge gap. Portfolios
+rebalance every 5 days in commodities and crypto and every 21 days
+elsewhere. Neural methods run with 10 seeds and are reported as mean $\pm$
+standard deviation; classical methods are deterministic and contribute a
+single value.
 
 \paragraph{Statistical battery.}
-We report (i)~Probabilistic Sharpe Ratio \citep{Bailey2012PSR}
-(probability the true Sharpe exceeds zero, sample-corrected for skew
-and kurtosis); (ii)~Newey--West HAC t-statistics
-\citep{NeweyWest1987}; (iii)~Fama--French 3 + 5 factor
-\citep{FamaFrench2015} and momentum \citep{Carhart1997} regression
-alphas; (iv)~stationary
-block bootstrap \citep{PolitisRomano1994} pairwise Sharpe-difference
-tests with Holm--Bonferroni \citep{Holm1979} and Diebold--Mariano
-\citep{DieboldMariano1995} forecast accuracy; (v)~SPA \citep{Hansen2005}
-and MCS \citep{HansenLundeNason2011} multi-method tests at
-$\alpha = 0.05$.
+Five families: PSR \citep{Bailey2012PSR}; HAC t-statistics
+\citep{NeweyWest1987}; Fama-French three- and five-factor alphas plus
+momentum \citep{FamaFrench2015,Carhart1997}; stationary block-bootstrap
+pairwise Sharpe-difference tests \citep{PolitisRomano1994} with
+Holm-Bonferroni correction \citep{Holm1979} and Diebold-Mariano tests
+\citep{DieboldMariano1995}; and the SPA \citep{Hansen2005} and MCS
+\citep{HansenLundeNason2011} multi-method tests at $\alpha = 0.05$.
 
 \paragraph{Reproducibility.}
-We release Croissant 1.1 metadata \citep{Akhtar2024Croissant} including
-license, schema, train/test splits, and Responsible-AI annotations
-covering survivorship bias and data-leakage warnings; the full metadata is included in the supplementary material. The supplementary contains
-\texttt{requirements-frozen.txt}, a single-command \texttt{reproduce\_all.sh}
-pipeline, and an anonymous code release URL.
+The release ships Croissant 1.1 metadata \citep{Akhtar2024Croissant},
+frozen requirements, a single-command \texttt{reproduce\_all.sh}, and an
+anonymous code URL.
 
 
 \section{Results}
@@ -435,15 +449,26 @@ pipeline, and an anonymous code release URL.
 \subsection{Multi-universe Sharpe summary}
 \label{sec:results_main}
 
-Table~\ref{tab:headline} reports the headline result. DHRP achieves
-PSR $> 0.95$ in commodities ($1.30 \pm 0.10$, PSR $0.999$), crypto
-($1.29 \pm 0.05$, PSR $0.991$), and is borderline in sectors (PSR
-$0.946$) and factors ($0.949$). DHRP is the best risk-parity-family
-method in DM ($0.446 \pm 0.06$ vs.\ HRP $0.216$, EW $0.255$). MV
-dominates global multi-asset (Sharpe $0.99$, PSR $0.99$); all methods
-bleed in bonds during the 2022--2023 rate-hike period.
+Table~\ref{tab:headline} summarizes out-of-sample Sharpe ratios. DHRP
+performs best where correlation structure is rich and regimes shift:
+commodities ($1.304 \pm 0.095$, PSR 0.999) and crypto
+($1.290 \pm 0.052$, PSR 0.991), the top method in both universes. In
+developed markets it reaches $0.446 \pm 0.056$ (PSR 0.856), the best of
+the risk-parity family and ahead of mean-variance (0.333), equal weight
+(0.255), and classical HRP (0.216). Classical methods keep the lead
+elsewhere. Mean-variance dominates the global multi-asset universe (0.994,
+PSR 0.990, against DHRP at $0.357 \pm 0.092$), EM (0.660 versus DHRP's
+$0.469 \pm 0.004$), and sectors (0.861), while HRP is best in factors
+(0.704, PSR 0.955). Overall DHRP beats classical HRP in six of eight
+universes; the two losses, sectors ($0.677 \pm 0.050$ vs 0.698) and
+factors ($0.682 \pm 0.033$ vs 0.704), both sit within 0.03 Sharpe. Bonds
+are a failure case for every allocator: all methods lose money through the
+2022-2023 rate-hike period, and DHRP's $-0.896 \pm 0.055$ (PSR 0.016)
+still improves on HRP ($-1.176$) and equal weight ($-1.021$). The picture
+supports an asset-class-contingent reading: no single method wins
+everywhere, and the formal tests below agree.
 
-% Auto-generated by scripts/generate_paper_tables.py — do not hand-edit
+% Auto-generated by scripts/generate_paper_tables.py - do not hand-edit
 \begin{table*}[t]
 \caption{Mean$\pm$std out-of-sample Sharpe across 10 seeds with Probabilistic Sharpe Ratio in brackets. Bold marks best method per universe; $\ast$ marks PSR $> 0.95$. Classical baselines are deterministic (no std).}
 \label{tab:headline}
@@ -471,16 +496,18 @@ LLM-DHRP & $0.239{\pm}0.119$ [0.712] & $0.474{\pm}0.005$ [0.872] & $0.738{\pm}0.
 \subsection{Factor regression alphas}
 \label{sec:results_alphas}
 
-In commodities, DHRP achieves a Fama--French 3-factor annualized alpha
-of $6.3\%$ ($t=1.58$, not significant at the 5\% level), with the next-
-best classical baseline (MINVAR) at $7.3\%$ ($t=2.25$). LLM-DHRP attains
-a higher FF3 alpha at $9.0\%$ ($t=2.20$, significant at the 5\% level)
-despite a lower mean Sharpe, illustrating that text-augmented allocation
-can shift the return distribution along factor exposures even when it
-does not improve the headline Sharpe (the LLM ablation section).
-We do not report AQR cross-sectional Value/Momentum alphas in the main
-body; the AQR series for the commodities universe is incomplete in our
-data window and the regression is omitted.
+Factor regressions tell a more guarded story. Table~\ref{tab:alphas}
+reports annualized Fama-French three-factor alphas in commodities with HAC
+t-statistics. DHRP's alpha of 6.3\% carries a t-statistic of 1.58 and is
+not significant at the 5\% level, so the commodity headline rests on the
+sample Sharpe and its PSR of 0.999 rather than on a significant
+risk-adjusted alpha; we state this plainly rather than letting the
+strongest table speak alone. Minimum variance, by contrast, earns a
+significant 7.3\% (t=2.25). The most surprising row is LLM-DHRP: a
+significant 9.0\% alpha (t=2.20) despite a lower mean Sharpe than DHRP.
+Text input evidently shifts the return distribution along factor exposures
+without improving headline risk-adjusted performance, a distinction that
+single-metric reporting would have missed.
 
 % Auto-generated by scripts/generate_paper_tables.py
 \begin{table}[t]
@@ -508,39 +535,45 @@ LLM-DHRP & 9.0\% (2.20)$^{\ast}$ \\
 \subsection{Multi-method tests and transaction-cost sensitivity}
 \label{sec:results_mcs}
 
-The Superior Predictive Ability test \citep{Hansen2005} returns
-$p \approx 0.30$ for the full method panel against EW, supporting the
-``no universal best'' thesis: heterogeneity across asset classes
-prevents any single method from dominating the benchmark. The Model
-Confidence Set at $\alpha = 0.05$ includes DHRP, HRP, MV, MINVAR, and
-EW in commodities; DHRP, MV, and EW in crypto. DHRP commodity Sharpe
-remains $\geq 0.9$ at 10\,bps per-trade transaction cost and degrades
-to $\sim 0.5$ at 50\,bps; the breakeven cost vs.\ EW is approximately
-30\,bps, with the full cost grid reported in the supplementary material.
+The SPA test \citep{Hansen2005} over the full panel against an
+equal-weight benchmark returns $p \approx 0.30$: no method, DHRP included,
+universally beats 1/N, consistent with \citet{DeMiguel2009} and with the
+asset-class-contingent pattern above. Model confidence sets at
+$\alpha = 0.05$ retain \{DHRP, HRP, MV, MINVAR, EW\} in commodities and
+\{DHRP, MV, EW\} in crypto, so DHRP survives elimination in both universes
+where it leads. Transaction costs do not overturn the commodity result:
+DHRP's Sharpe stays at or above 0.9 at 10 basis points per trade, degrades
+to roughly 0.5 at 50 basis points, and breaks even against equal weight
+near 30 basis points.
 
 \subsection{Ablations}
 \label{sec:results_ablations}
 
-Three ablations clarify which DHRP components matter; full sweeps are reported in the supplementary material: (i)~\textbf{tree
-depth}: depth=$2$ is optimal for DM and EM; depth=$3$ for global
-multi-asset, consistent with deeper trees fitting more diverse
-correlation structures. (ii)~\textbf{Loss components}: removing the
-HRP regularizer drops commodity Sharpe by $0.32 \pm 0.06$ across seeds,
-confirming the inductive bias is load-bearing rather than cosmetic.
-(iii)~\textbf{Text fusion}: ablating text recovers DHRP-only
-performance within $\pm 0.02$ Sharpe, confirming the LLM-DHRP negative
-result (the LLM ablation section) is not a training-instability
-artifact but reflects insufficient signal in the per-asset news
-features.
+Three ablations probe the design. Tree depth first: depth 2 is optimal for
+DM and EM, while the more heterogeneous global multi-asset and factor
+universes prefer depth 3, consistent with structural complexity tracking
+cross-asset diversity. Second, the HRP regularizer: removing it drops
+commodity Sharpe by $0.32 \pm 0.06$ across seeds, confirming that the
+classical anchor does real work rather than serving as decoration. Third,
+text removal: stripping the text pathway from LLM-DHRP recovers DHRP-only
+performance to within $\pm 0.02$ Sharpe. This last check matters for the
+next section, because it rules out the possibility that the negative LLM
+result is an artifact of training instability introduced by the extra
+parameters.
 
 
 \section{Honest Negative Ablation: LLM Augmentation}
 \label{sec:llmablation}
 
-We tested whether augmenting DHRP with FinBERT \citep{Huang2023}
-embeddings of asset-attributed news headlines could improve allocation.
-Under multi-seed evaluation, the answer is no
-(Table~\ref{tab:llm_ablation}).
+Table~\ref{tab:llm_ablation} compares LLM-DHRP with DHRP across the three
+universes with text coverage, ten seeds each. The text pathway helps
+nowhere. In EM the two are statistically indistinguishable
+($0.474 \pm 0.005$ vs $0.469 \pm 0.004$, $\Delta = +0.005$). In DM the
+augmented model regresses ($0.239 \pm 0.119$ vs $0.446 \pm 0.056$,
+$\Delta = -0.207$), and in commodities it regresses badly
+($0.738 \pm 0.104$ vs $1.304 \pm 0.095$, $\Delta = -0.566$). A single
+lucky seed would have told a different story; the multi-seed protocol is
+what exposes the failure.
 
 % Auto-generated by scripts/generate_paper_tables.py
 \begin{table}[h]
@@ -560,70 +593,68 @@ CMD & $1.304{\pm}0.095$ [0.999$^{\ast}$] & $0.738{\pm}0.104$ [0.956$^{\ast}$] & 
 }
 \end{table}
 
-
 \paragraph{Why does LLM augmentation fail?}
-Three candidate explanations are investigated in the supplementary material:
-(i)~\textbf{coverage sparsity}---per-asset headline windows have
-substantial market-fallback rate, eroding asset-specific signal;
-(ii)~\textbf{BERT anisotropy persistence after temporal
-aggregation}---per-headline FinBERT embeddings are well-distributed
-(cosine similarity mean $0.24$) but the temporal+normalized
-$[\text{mean}, \text{max}]$ aggregation collapses inter-day variation
-($0.96$); (iii)~\textbf{warm-start training instability}---the
-cross-modal gate amplifies small text signals into large weight
-swings, raising seed-to-seed variance ($\mathrm{std}=0.121$ in
-commodities vs.\ $0.067$ for DHRP).
+We identify three mechanisms, each measurable. First, coverage sparsity:
+asset-attributed headlines are thin outside mega-caps, so the pipeline
+falls back to market-level text at a high rate, eroding the asset-specific
+signal before it reaches the tree. Second, FinBERT anisotropy survives
+temporal aggregation. Individual headline embeddings are well spread, with
+mean pairwise cosine similarity of 0.24, but after within-window
+averaging, normalization, and the mean-max pooling, inter-day similarity
+rises to 0.96, leaving the model a nearly constant input. Third,
+warm-start instability: the cross-modal gate amplifies small text
+fluctuations into large weight swings, and seed standard deviation in
+commodities rises to 0.121 against 0.067 for DHRP.
 
 \paragraph{Comparison to literature.}
-This negative result is consistent with concurrent benchmark evidence:
-\citet{Tan2024AreLMs} (NeurIPS 2024 Spotlight) showed that removing the
-LLM component from time-series forecasters improves performance;
-\citet{Chen2025StockBench} demonstrated most LLM-trading agents
-underperform buy-and-hold; \citet{Xie2024FinBen} reported LLMs are weak
-at forecasting. Single-seed lifts in finance \citep{Kirtac2025} should
-be interpreted with caution. The headline DHRP results
-(Results section) stand without LLM augmentation.
+Our finding matches a growing body of negative evidence: most LLM trading
+agents fail to beat buy-and-hold \citep{Chen2025StockBench}, LLMs
+underperform at financial forecasting \citep{Xie2024FinBen}, ablating the
+LLM from time-series models can improve them \citep{Tan2024AreLMs}, and
+live prediction-market evaluations are similarly equivocal
+\citep{Cheng2026PolyBench}. Positive single-seed reports such as
+\citet{Kirtac2025} are not contradicted by our result, but our
+seed-variance numbers suggest such lifts should be replicated across seeds
+before being trusted. At the same time, the significant factor alpha of
+LLM-DHRP in commodities (Table~\ref{tab:alphas}) shows the text signal is
+not pure noise: it changes factor exposures without improving Sharpe,
+exactly the kind of nuance a fully reported negative result can surface.
 
 
 \section{Limitations and Discussion}
 \label{sec:limits}
 
-DHRP's hierarchical inductive bias is most valuable when average
-pairwise correlation is low (commodities $\approx 0.3$, crypto
-$\approx 0.4$) and the cross-asset structure is regime-dependent
-rather than factor-dominated; it underperforms classical mean-variance
-in the equity-heavy universes where factor exposures dominate the
-covariance structure (emerging markets and global multi-asset), even
-though it improves on MV in developed markets. In sectors and US-factor
-ETFs the headline Sharpe is within 0.03 of HRP, so the gain there is
-not meaningful. The
-LLM augmentation result is a negative finding rather than a definitive
-no---per-asset news coverage is the binding constraint
-(the LLM ablation section), and finance-domain sentence-transformers
-\citep{FinLang2025} or news-velocity-gated mixture-of-experts could
-revisit this. We use Probabilistic Sharpe Ratio
-\citep{Bailey2012PSR} but not the Deflated Sharpe \citep{Bailey2014DSR};
-our static ETF universes carry survivorship bias documented in
-the supplementary material; the OOS window is single-period
-(2020--2026) but spans COVID, recovery, rate hikes, and the post-hike
-regime.
+Several limitations bound our claims. DHRP is a relaxation, and its
+hard-routing limit does not recover classical HRP, so our results say
+nothing about HRP itself beyond its role as baseline and anchor. Each
+universe holds 10 US-traded ETFs; behavior at the scale of hundreds of
+single names, where the assignment matrix grows large and news coverage is
+even more uneven, is untested. The out-of-sample window from July 2020 to
+April 2026 contains one rate-hike drawdown and one crypto cycle, and while
+PSR guards against some sample-specific luck
+\citep{Bailey2012PSR,Bailey2014DSR}, a longer horizon would be more
+convincing. The commodity headline rests on sample Sharpe rather than a
+significant factor alpha, as discussed above, and our cost analysis uses
+flat per-trade basis points without market impact. On the text side, the
+negative result is specific to one encoder and one aggregation scheme;
+stronger finance sentence encoders \citep{FinLang2025} and aggregations
+that preserve inter-day variation are natural next steps, and our
+anisotropy diagnosis points there rather than to abandoning text
+altogether.
 
 
 \section{Conclusion}
 \label{sec:conclusion}
 
-DHRP is a differentiable, HRP-inspired allocator with a soft-gating
-tree and HRP-like regularization. On DHRP-8, it achieves a Sharpe of
-$1.30 \pm 0.10$ in commodities (PSR $0.999$) and $1.29 \pm 0.05$ in
-crypto (PSR $0.991$), and beats classical HRP in six of eight universes
-(the two losses, sectors and factors, are within 0.03 Sharpe of HRP).
-We document an honest negative result: under multi-seed reporting and
-on the universes where text features are available (DM, EM,
-commodities), FinBERT-based LLM augmentation does not improve mean
-Sharpe and regresses in commodities and DM, even though its FF3 alpha
-in commodities is significant at the 5\% level. The DHRP-8 benchmark,
-code, multi-seed checkpoints, and Croissant 1.1 metadata are released
-to support reproducible portfolio research.
+We turned HRP's discrete pipeline into a trainable architecture, anchored
+it to its classical ancestor with an annealed regularizer, and measured it
+under a protocol designed to resist flattering noise. DHRP earns the top
+Sharpe in commodities and crypto and beats classical HRP in six of eight
+universes, while the SPA test confirms that no allocator, ours included,
+dominates everywhere. The LLM extension fails under honest multi-seed
+reporting, and we publish that failure together with its mechanisms. We
+hope DHRP-8, with its seeds, statistical battery, and Croissant metadata,
+makes the next claim in this area easier to verify than it was to produce.
 
 
 \bibliography{references}
