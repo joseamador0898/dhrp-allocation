@@ -25,6 +25,9 @@ results/*.csv
 results/full/
 results/features/
 results/models/
+notebooks/results/
+*.pt
+*.pth
 
 # LaTeX build artifacts
 paper/*.aux

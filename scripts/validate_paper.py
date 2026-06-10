@@ -1,4 +1,4 @@
-"""Pre-submission integrity check for the NeurIPS 2026 E&D paper.
+"""Pre-submission integrity check for the DHRP top-AI submission package.
 
 Run BEFORE submission to catch common desk-reject triggers:
   - Missing references / bibliography keys
@@ -103,7 +103,7 @@ def scan_deanon_text(text: str) -> list[tuple[str, str]]:
 
 def main() -> int:
     print("=" * 70)
-    print("  NeurIPS 2026 E&D Paper Pre-Submission Validator")
+    print("  DHRP Submission Pre-Submission Validator")
     print("=" * 70)
 
     errors: list[str] = []
@@ -125,14 +125,15 @@ def main() -> int:
             errors.append(f"Missing: {p.relative_to(ROOT)}")
             print(f"  {red('FAIL')} {p.relative_to(ROOT)}")
 
-    # 2. Required style files (downloaded from Overleaf, not in repo)
-    print("\n[2] NeurIPS 2026 style files (download from Overleaf)...")
-    sty = PAPER / "neurips_2026.sty"
-    if sty.exists():
-        print(f"  {green('OK')} neurips_2026.sty")
+    # 2. Required style files
+    print("\n[2] Conference style files...")
+    sty = PAPER / "aaai2026.sty"
+    bst = PAPER / "aaai2026.bst"
+    if sty.exists() and bst.exists():
+        print(f"  {green('OK')} AAAI proxy style files present")
     else:
-        warnings.append("neurips_2026.sty not in paper/ — download from official Overleaf template before pdflatex")
-        print(f"  {yellow('WARN')} neurips_2026.sty (download required)")
+        warnings.append("AAAI proxy style files missing — replace with official AAAI 2027 author kit before final submission")
+        print(f"  {yellow('WARN')} AAAI style proxy files missing")
 
     # 3. Bibliography integrity
     print("\n[3] Bibliography...")

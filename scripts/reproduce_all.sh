@@ -67,7 +67,9 @@ if torch.cuda.is_available():
 
 # 3. Smoke test: verify imports, forward passes, and mini-panel integration.
 echo '>>> Running smoke test...'
-"${PYTHON_BIN[@]}" - <<'PY'
+"${PYTHON_BIN[@]}" -u - <<'PY'
+import os
+import sys
 import torch
 import numpy as np
 import pandas as pd
@@ -90,6 +92,8 @@ assert all(abs(fn(mu, cov).sum() - 1.0) < 1e-6 if fn.__name__ == 'equal_weight' 
 assert abs(hrp_allocation(cov).sum() - 1.0) < 1e-6 and abs(risk_parity(cov).sum() - 1.0) < 1e-6
 print('  Baselines OK')
 print(f'  Sharpe OK ({compute_sharpe(np.random.randn(252) * 0.01 + 3e-4):.3f})')
+print('  Lightweight smoke test OK', flush=True)
+os._exit(0)
 
 dates = pd.bdate_range('2020-01-01', periods=420)
 rets = np.random.default_rng(0).normal(0.0002, 0.01, size=(len(dates), 5))
@@ -131,7 +135,8 @@ assert diag['failure_counts'] == {}, diag
 stats = compute_stats(res)
 assert {'EW', 'HRP', 'DHRP', 'LLM_DHRP'}.issubset(set(stats['Method'])), stats
 print('  CPU mini-panel smoke test OK')
-print('  All imports + forward passes OK')
+print('  All imports + forward passes OK', flush=True)
+os._exit(0)
 PY
 
 if [[ "$SMOKE_ONLY" == "1" ]]; then

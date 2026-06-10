@@ -112,12 +112,19 @@ def scan_file(path: Path, patterns: list[tuple[re.Pattern[str], str]]) -> list[t
         return flags
     for i, line in enumerate(text.split("\n"), 1):
         for pat, label in patterns:
-            if pat.search(line):
-                snippet = line.strip()
-                if len(snippet) > 100:
-                    snippet = snippet[:100] + "..."
-                flags.append((i, label, snippet))
-                break
+            matched = pat.search(line)
+            if not matched:
+                continue
+            token = matched.group(0).lower()
+            if label == "email-like" and token.startswith("git@github.com"):
+                continue
+            if "<your-account>" in line or "<anonymous>" in line:
+                continue
+            snippet = line.strip()
+            if len(snippet) > 100:
+                snippet = snippet[:100] + "..."
+            flags.append((i, label, snippet))
+            break
     return flags
 
 

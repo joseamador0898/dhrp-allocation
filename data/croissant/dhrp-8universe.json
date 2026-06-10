@@ -55,12 +55,12 @@
   "creator": [
     {
       "@type": "Person",
-      "name": "Anonymous"
+      "name": "Jose Luis Amador Jaime"
     }
   ],
   "publisher": {
-    "@type": "Organization",
-    "name": "Anonymous"
+    "@type": "Person",
+    "name": "Jose Luis Amador Jaime"
   },
   "keywords": [
     "portfolio optimization",
@@ -73,12 +73,12 @@
     "LLM-finance",
     "FinBERT"
   ],
-  "citeAs": "@inproceedings{anon2026dhrp, title={DHRP: A Differentiable Hierarchical Risk Parity Architecture and Multi-Universe Portfolio Benchmark}, author={Anonymous}, booktitle={NeurIPS 2026 Evaluations and Datasets Track}, year={2026}}",
+  "citeAs": "@inproceedings{amador2027dhrp, title={DHRP: A Differentiable Hierarchical Risk Parity Architecture and Multi-Universe Portfolio Benchmark}, author={Amador Jaime, Jose Luis}, year={2027}}",
   "rai:dataCollection": "ETF prices and volumes are obtained from Yahoo Finance v8 API (public). Financial news headlines are fetched from public RSS/GDELT-style sources by script, subject to upstream terms. FinBERT embeddings (768-dim) are extracted using the ProsusAI/finbert HuggingFace model. Fama-French factors are fetched via Kenneth French's online data library. AQR commodity Value/Momentum series were considered only as optional robustness data and are omitted from the main released factor results because the available commodity window is incomplete.",
   "rai:dataBiases": "Static ETF universes do not adjust for delisting or universe changes between 2012 and 2026, introducing a small survivorship bias. CPER (commodities) and several factor ETFs have inception dates after 2012 and are filled with NaN until inception. The Crypto universe history is shorter (2020-2026 only) due to limited ETF availability before 2020.",
   "rai:dataAnnotationProtocol": "All headlines are tagged with their primary ticker via either explicit metadata (Reuters/Bloomberg) or fuzzy matching against the universe ticker list. Headlines without a clear single-asset attribution are tagged as 'MARKET' and used as fallback when an asset has fewer than 2 headlines in a 90-day rolling window.",
   "rai:personalSensitiveInformation": "None. The dataset contains only public market data and public news headlines. No individuals, no PII.",
-  "rai:dataReleaseMaintenancePlan": "Initial release at NeurIPS 2026 camera-ready (December 2026). Yearly updates to extend the OOS window. Versioned via DOI on Zenodo with persistent identifiers.",
+  "rai:dataReleaseMaintenancePlan": "Initial anonymous artifact release for AAAI 2027 review. Yearly updates will extend the out-of-sample window after acceptance. Versioned persistent identifiers will be added post-acceptance.",
   "rai:annotationsPerExample": "1 (ticker attribution per headline)",
   "distribution": [
     {

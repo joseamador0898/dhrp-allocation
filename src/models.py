@@ -777,7 +777,7 @@ class TextProjectionNetwork(nn.Module):
 
 
 class CrossModalFusion(nn.Module):
-    """Cross-attention fusion between price features and text features.
+    """Single-token gated residual fusion between price features and a global text summary.
 
     Uses a residual gated mechanism: text provides an additive correction
     to price features, scaled by a learned gate initialized near zero
@@ -798,7 +798,7 @@ class CrossModalFusion(nn.Module):
         self.text_dropout = nn.Dropout(0.3)
 
     def forward(self, price_feat, text_feat):
-        """Fuse price and text features via residual gated cross-attention.
+        """Fuse price and text features via single-token gated residual attention.
 
         Args:
             price_feat: (feature_dim,) price feature vector
@@ -824,7 +824,7 @@ class LLMDHRPLayer(nn.Module):
 
     Architecture:
         price_features (48d) ──┐
-                                ├── CrossModalFusion ──> DHRPTree ──> weights
+                                ├── gated residual fusion ──> DHRPTree ──> weights
         text_features  (48d) ──┘
                                         ↑
                              covariance_features

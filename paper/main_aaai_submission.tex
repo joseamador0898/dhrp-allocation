@@ -1,41 +1,65 @@
 % =====================================================================
-% ICAIF 2026 / ACM sigconf anonymous submission build
-% Primary target: ACM International Conference on AI in Finance (ICAIF) 2026
+% AAAI 2027 submission build of:
+%   "DHRP: A Differentiable Hierarchical Risk Parity Architecture
+%    and Multi-Universe Portfolio Benchmark"
+%
+% Track:  Main Technical Track
+% Format: two-column, 10pt Times, US Letter
+% Pages:  7 body + unlimited references
+%
+% Style files (place in this directory):
+%   aaai2026.sty  -- proxy until AAAI 2027 author kit is released.
+%                    When released, download from https://aaai.org/authorkit27/
+%                    and replace aaai2026.sty with aaai2027.sty, then update
+%                    \usepackage below accordingly.
+%   aaai2026.bst  -- same: replace with aaai2027.bst when released.
+%   NOTE: Do NOT modify aaai2026.sty -- AAAI prohibits any modification.
+%
+% Build:
+%   pdflatex main_aaai ; bibtex main_aaai ; pdflatex main_aaai ; pdflatex main_aaai
+%
+% Submission options:
+%   [submission]   : anonymous (hides author block) -- USE THIS FOR SUBMISSION
+%   (no option)    : camera-ready (shows author block)
 % =====================================================================
-% For double-blind submission upload, re-add the "anonymous" option:
-%   \documentclass[sigconf,anonymous,nonacm]{acmart}
-\documentclass[sigconf,nonacm]{acmart}
+\documentclass[letterpaper]{article}
 
-\settopmatter{printacmref=false}
-\renewcommand\footnotetextcopyrightpermission[1]{}
-\pagestyle{plain}
-
-% acmart already loads natbib, url, hyperref, amsmath, and graphicx.
+% For double-blind submission upload, re-add the [submission] option:
+%   \usepackage[submission]{aaai2026}
+\usepackage{aaai2026}   % swap to aaai2027 when kit releases
+\usepackage{times}
+\usepackage{helvet}
+\usepackage{courier}
+\usepackage[hyphens]{url}
+\usepackage{graphicx}
+\usepackage{amsmath, amssymb, amsthm}
 \usepackage{booktabs}
-\usepackage{multirow}
+\usepackage{natbib}
 \usepackage{algorithm}
 \usepackage{algorithmic}
+\usepackage{multirow}
 \usepackage{xcolor}
 \usepackage{microtype}
 \usepackage{tikz}
 \usetikzlibrary{positioning, arrows.meta, shapes.geometric, calc}
 
-\newtheorem{proposition}{Proposition}
-\graphicspath{{figures/}{../results/figures/}}
+\frenchspacing
+\setlength{\pdfpagewidth}{8.5in}
+\setlength{\pdfpageheight}{11in}
 
-\acmConference[ICAIF '26]{The 7th ACM International Conference on AI in Finance}{November 14--17, 2026}{Milan, Italy}
-\acmBooktitle{ICAIF '26: The 7th ACM International Conference on AI in Finance, November 14--17, 2026, Milan, Italy}
-\acmYear{2026}
-\copyrightyear{2026}
-\acmDOI{}
-\acmISBN{}
+\newtheorem{proposition}{Proposition}
+
+\graphicspath{{figures/}{../results/figures/}}
 
 \title{DHRP: A Differentiable Hierarchical Risk Parity Architecture and Multi-Universe Portfolio Benchmark}
 
-\author{Jose Luis Amador Jaime}
-\affiliation{\institution{Independent Researcher}\country{USA}}
+% In [submission] mode, the author block is suppressed automatically.
+\author{Jose Luis Amador Jaime\\
+Independent Researcher}
 
 \begin{document}
+\maketitle
+
 \begin{abstract}
 We introduce \textbf{DHRP}, a differentiable extension of Hierarchical Risk
 Parity \citep{LopezdePrado2016} that replaces hard agglomerative clustering
@@ -58,7 +82,6 @@ This honest negative ablation joins a growing benchmark literature
 LLM-finance claims. We release the 8-universe dataset (Croissant~1.1
 metadata), multi-seed checkpoints, and a single-command reproduction pipeline.
 \end{abstract}
-\maketitle
 
 
 \section{Introduction}
@@ -603,8 +626,7 @@ code, multi-seed checkpoints, and Croissant 1.1 metadata are released
 to support reproducible portfolio research.
 
 
-
-
-\bibliographystyle{ACM-Reference-Format}
 \bibliography{references}
+% aaai2026.sty sets \bibliographystyle automatically -- do NOT add \bibliographystyle here.
+
 \end{document}

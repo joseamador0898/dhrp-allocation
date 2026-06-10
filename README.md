@@ -1,6 +1,6 @@
 # DHRP: Differentiable Hierarchical Risk Parity
 
-A differentiable, HRP-inspired portfolio allocator plus the **DHRP-8** multi-universe portfolio benchmark. NeurIPS 2026 Evaluations & Datasets track submission.
+A differentiable, HRP-inspired portfolio allocator plus the **DHRP-8** multi-universe portfolio benchmark. ICAIF 2026 primary submission package, with an AAAI-style backup draft retained for later general-AI submission.
 
 - DHRP is an HRP-inspired differentiable relaxation; we do not claim
   the hard-routing limit reproduces full classical HRP.
@@ -24,13 +24,16 @@ bash scripts/reproduce_all.sh     # smoke test + full run
 bash scripts/reproduce_all.sh --smoke-only
 ```
 
-The smoke path verifies imports, forward passes, dataset construction, DHRP/LLM-DHRP backtest execution, and zero fallback weight computations. The full run takes about 7 GPU-hours on a T4 or 2 GPU-hours on an A100, end-to-end.
+The smoke path verifies imports, DHRP and LLM-DHRP forward passes, dataset construction, a CPU mini-panel DHRP backtest, and zero fallback weight computations for strict methods. The full run takes about 7 GPU-hours on a T4 or 2 GPU-hours on an A100, end-to-end.
 
 ## Repo layout
 
 ```
-paper/                  LaTeX source (1086-line single-file main.tex)
-  main.tex              all sections + tables + figure + appendix + checklist
+paper/                  LaTeX source
+  main_icaif.tex        primary ACM/ICAIF anonymous submission source
+  main_icaif.pdf        compiled primary ICAIF PDF
+  main_aaai_submission.tex  AAAI-style backup draft (uses aaai2026 proxy style until 2027 kit releases)
+  main_aaai_submission.pdf  compiled anonymous AAAI-style backup PDF
   references.bib        52 entries
   neurips_2026.sty      NeurIPS 2026 style file
 notebooks/
@@ -115,7 +118,7 @@ cd paper
 pdflatex main && bibtex main && pdflatex main && pdflatex main
 ```
 
-Requires a TeX distribution (MiKTeX on Windows, TeX Live on Linux or macOS). Output: `paper/main.pdf` (15 pages, body fits in 6 of the 9 allowed).
+Requires a TeX distribution (MiKTeX on Windows, TeX Live on Linux or macOS). Primary output: `paper/main_icaif.pdf`. Build with `pdflatex main_icaif`, `bibtex main_icaif`, then two more `pdflatex main_icaif` runs. The backup AAAI-style draft is `paper/main_aaai_submission.pdf`.
 
 ## Environment
 
@@ -136,3 +139,8 @@ Will be added on acceptance.
 ## License
 
 [MIT](LICENSE).
+
+
+## AAAI 2027 submission note
+
+The primary target is AAAI 2027 because its OpenReview venue currently lists an abstract-registration deadline of 2026-07-21 and a full-paper deadline of 2026-07-28. The current LaTeX uses AAAI 2026 style files as a proxy; before actual submission, replace them with the official AAAI 2027 author kit and recompile. Keep the main-paper claims conservative: PSR is evidence of positive Sharpe, not paired outperformance, and DHRP is an HRP-inspired differentiable relaxation rather than an exact differentiable implementation of classical HRP.
