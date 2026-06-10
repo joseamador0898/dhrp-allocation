@@ -690,14 +690,97 @@ def probabilistic_sharpe_ratio(r, sr_threshold=0.0, rf=0.03):
     return float(norm.cdf(z))
 
 
-def compute_stats(results, rf=0.03, n_boot=1000, gamma=2.5, oos_start=None):
+def expected_max_sharpe_ann(trial_sharpes, n_trials=None):
+    """Expected maximum (annualized) Sharpe ratio under the null of zero skill.
+
+    Bailey & López de Prado (2014) order-statistic approximation used by the
+    Deflated Sharpe Ratio:
+
+        SR0 = sqrt(V[SR]) * ((1 - g) * Z^-1[1 - 1/N] + g * Z^-1[1 - 1/(N*e)])
+
+    where V[SR] is the variance of the trial Sharpe ratios, N the number of
+    trials, g the Euler-Mascheroni constant, and Z^-1 the standard-normal
+    quantile. Inputs and output are annualized.
+
+    Args:
+        trial_sharpes: annualized Sharpe ratios, one per configuration searched.
+        n_trials: number of trials N (defaults to len(trial_sharpes)).
+    Returns:
+        Expected maximum annualized Sharpe under the null, or np.nan.
+    """
+    ts = np.asarray([s for s in np.ravel(trial_sharpes) if np.isfinite(s)], dtype=float)
+    N = int(n_trials) if n_trials else len(ts)
+    if N < 2 or len(ts) < 2:
+        return np.nan
+    var_sr = float(np.var(ts, ddof=1))
+    if var_sr <= 0:
+        return np.nan
+    em = 0.5772156649015329  # Euler-Mascheroni constant
+    z1 = norm.ppf(1.0 - 1.0 / N)
+    z2 = norm.ppf(1.0 - 1.0 / (N * np.e))
+    return float(np.sqrt(var_sr) * ((1.0 - em) * z1 + em * z2))
+
+
+def deflated_sharpe_ratio(r, trial_sharpes=None, n_trials=None,
+                          sr_variance_ann=None, rf=0.03):
+    """Deflated Sharpe Ratio (Bailey & López de Prado 2014).
+
+    The DSR is the Probabilistic Sharpe Ratio evaluated against a threshold
+    SR0 equal to the expected maximum Sharpe achievable by chance after N
+    trials. It therefore corrects the headline Sharpe for selection bias under
+    multiple testing, on top of the skew, kurtosis, and sample-length
+    corrections already in the PSR. This is the single statistic most often
+    requested by finance reviewers to rule out backtest overfitting.
+
+    Provide either ``trial_sharpes`` (annualized Sharpe ratios of the searched
+    configurations; variance and N are taken from it) or both
+    ``sr_variance_ann`` and ``n_trials``.
+
+    Args:
+        r: array of daily (per-period) returns for the strategy of interest.
+        trial_sharpes: annualized Sharpe ratios across the trials searched.
+        n_trials: number of trials N (defaults to len(trial_sharpes)).
+        sr_variance_ann: variance of annualized trial Sharpe ratios.
+        rf: annualized risk-free rate.
+    Returns:
+        DSR in [0, 1], or np.nan if undefined.
+    """
+    if trial_sharpes is not None:
+        sr0_ann = expected_max_sharpe_ann(trial_sharpes, n_trials=n_trials)
+    elif sr_variance_ann is not None and n_trials:
+        N = int(n_trials)
+        if N < 2 or sr_variance_ann <= 0:
+            return np.nan
+        em = 0.5772156649015329
+        z1 = norm.ppf(1.0 - 1.0 / N)
+        z2 = norm.ppf(1.0 - 1.0 / (N * np.e))
+        sr0_ann = float(np.sqrt(sr_variance_ann) * ((1.0 - em) * z1 + em * z2))
+    else:
+        raise ValueError(
+            "deflated_sharpe_ratio requires trial_sharpes or "
+            "(sr_variance_ann and n_trials)."
+        )
+    if not np.isfinite(sr0_ann):
+        return np.nan
+    # DSR = PSR with the deflated (expected-max) Sharpe as the threshold.
+    return probabilistic_sharpe_ratio(r, sr_threshold=sr0_ann, rf=rf)
+
+
+def compute_stats(results, rf=0.03, n_boot=1000, gamma=2.5, oos_start=None,
+                  dsr_trials=None):
     """Compute comprehensive performance metrics for each method.
 
     If ``oos_start`` is provided, restrict metrics to dates >= oos_start so
     headline numbers reflect strict out-of-sample performance.
 
+    The Deflated Sharpe Ratio (DSR) deflates each method's PSR by the number of
+    configurations searched. By default the trial set is the Sharpe ratios of
+    all methods evaluated in this call (a transparent per-universe deflation);
+    pass ``dsr_trials`` (annualized Sharpe ratios spanning the full search
+    space, e.g. all method/seed/hyperparameter trials) for a stricter test.
+
     Returns DataFrame with columns: Method, Sharpe, Sortino, Calmar, MaxDD,
-    CVaR_5, VaR_5, Omega, CER, Ann_Return, Ann_Vol, HAC_t, CI_lo, CI_hi.
+    CVaR_5, VaR_5, Omega, CER, Ann_Return, Ann_Vol, HAC_t, CI_lo, CI_hi, PSR, DSR.
     """
     if oos_start is not None and "date" in results.columns and not results.empty:
         cutoff = pd.Timestamp(oos_start)
@@ -722,6 +805,7 @@ def compute_stats(results, rf=0.03, n_boot=1000, gamma=2.5, oos_start=None):
             )
 
     stats = []
+    ret_by_method = {}
     for m in sorted(results["method"].unique()):
         r = (
             results[results["method"] == m]
@@ -730,6 +814,7 @@ def compute_stats(results, rf=0.03, n_boot=1000, gamma=2.5, oos_start=None):
         ).dropna().values
         if len(r) == 0:
             continue
+        ret_by_method[m] = r
         exc = r - rf / 252
         vol = exc.std()
         ann_ret = exc.mean() * 252
@@ -791,6 +876,28 @@ def compute_stats(results, rf=0.03, n_boot=1000, gamma=2.5, oos_start=None):
             "HAC_t": hac_t, "CI_lo": ci_lo, "CI_hi": ci_hi,
             "PSR": psr,
         })
+
+    # Deflated Sharpe Ratio: deflate each method's PSR by the number of
+    # configurations searched. Default trial set = the Sharpe ratios of all
+    # methods evaluated here; callers can pass a wider search space via
+    # dsr_trials (e.g. all method x seed x hyperparameter Sharpes).
+    if stats:
+        if dsr_trials is not None:
+            trials = np.asarray(
+                [s for s in np.ravel(dsr_trials) if np.isfinite(s)], dtype=float
+            )
+        else:
+            trials = np.asarray(
+                [row["Sharpe"] for row in stats if np.isfinite(row.get("Sharpe", np.nan))],
+                dtype=float,
+            )
+        for row in stats:
+            r_m = ret_by_method.get(row["Method"])
+            if r_m is not None and len(trials) >= 2:
+                row["DSR"] = deflated_sharpe_ratio(r_m, trial_sharpes=trials, rf=rf)
+            else:
+                row["DSR"] = np.nan
+
     return pd.DataFrame(stats)
 
 
@@ -1376,6 +1483,87 @@ def model_confidence_set(results, alpha=0.05, n_boot=1000, rf=0.03):
             eliminated = True
 
     return mcs
+
+
+def cscv_pbo(returns_matrix, n_splits=16, rf=0.03):
+    """Probability of Backtest Overfitting via CSCV (Bailey et al. 2017).
+
+    Combinatorially Symmetric Cross-Validation partitions the return panel into
+    ``n_splits`` equal blocks, forms every way of splitting the blocks into an
+    in-sample (IS) half and a complementary out-of-sample (OOS) half, picks the
+    strategy with the best IS Sharpe, and records that strategy's OOS rank. PBO
+    is the fraction of splits in which the IS-best strategy lands below the OOS
+    median (logit lambda <= 0). A low PBO means choosing the best backtested
+    configuration is unlikely to be an artifact of overfitting.
+
+    Args:
+        returns_matrix: (T, N) array or DataFrame of per-period returns; each
+            column is a candidate strategy/configuration, each row a period.
+        n_splits: number of blocks S (forced even). C(S, S/2) splits are
+            evaluated; S=16 gives 12870 splits.
+        rf: annualized risk-free rate used in the per-block Sharpe.
+    Returns:
+        dict with keys pbo, n_trials, n_splits, n_combinations, median_logit,
+        and logits.
+    """
+    import itertools
+
+    if isinstance(returns_matrix, pd.DataFrame):
+        M = returns_matrix.to_numpy(dtype=float)
+    else:
+        M = np.asarray(returns_matrix, dtype=float)
+
+    empty = {"pbo": np.nan, "n_trials": 0, "n_splits": 0,
+             "n_combinations": 0, "median_logit": np.nan, "logits": []}
+    if M.ndim != 2:
+        return empty
+    # Drop rows with any missing value so all strategies share the same dates.
+    M = M[~np.isnan(M).any(axis=1)]
+    T, N = M.shape
+    S = n_splits - (n_splits % 2)
+    if N < 2 or S < 2 or T < S * 2:
+        return {**empty, "n_trials": int(N), "n_splits": int(S)}
+
+    rows_per = T // S
+    M = M[: rows_per * S]
+    blocks = [M[i * rows_per:(i + 1) * rows_per] for i in range(S)]
+    all_idx = range(S)
+
+    def _sharpe_cols(x):
+        exc = x - rf / 252.0
+        mu = exc.mean(axis=0)
+        sd = exc.std(axis=0)
+        with np.errstate(divide="ignore", invalid="ignore"):
+            return np.where(sd > 0, (mu * 252.0) / (sd * np.sqrt(252.0)), 0.0)
+
+    logits = []
+    n_overfit = 0
+    for is_combo in itertools.combinations(all_idx, S // 2):
+        is_set = set(is_combo)
+        J = np.vstack([blocks[i] for i in all_idx if i in is_set])
+        Jbar = np.vstack([blocks[i] for i in all_idx if i not in is_set])
+        r_is = _sharpe_cols(J)
+        r_oos = _sharpe_cols(Jbar)
+        n_star = int(np.argmax(r_is))
+        # Relative OOS rank of the IS-best strategy (1 = worst .. N = best).
+        order = np.argsort(r_oos, kind="mergesort")
+        rank = int(np.where(order == n_star)[0][0]) + 1
+        omega = rank / (N + 1.0)
+        omega = min(max(omega, 1e-9), 1.0 - 1e-9)
+        lam = np.log(omega / (1.0 - omega))
+        logits.append(lam)
+        if lam <= 0.0:
+            n_overfit += 1
+
+    n_comb = len(logits)
+    return {
+        "pbo": float(n_overfit / n_comb) if n_comb else np.nan,
+        "n_trials": int(N),
+        "n_splits": int(S),
+        "n_combinations": int(n_comb),
+        "median_logit": float(np.median(logits)) if logits else np.nan,
+        "logits": logits,
+    }
 
 
 def benchmark_efficiency(models_dict, n_assets=5, feature_dim=48, n_runs=100):

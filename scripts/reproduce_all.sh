@@ -75,7 +75,8 @@ import numpy as np
 import pandas as pd
 
 from src.models import DHRPLayer, LLMDHRPLayer, MLPWithCovPolicy, equal_weight, hrp_allocation, risk_parity
-from src.evaluation import compute_sharpe, rolling_backtest, compute_stats
+from src.evaluation import (compute_sharpe, rolling_backtest, compute_stats,
+                            deflated_sharpe_ratio, cscv_pbo)
 from src.data import build_dataset
 from src.training import dhrp_weights
 
@@ -92,6 +93,13 @@ assert all(abs(fn(mu, cov).sum() - 1.0) < 1e-6 if fn.__name__ == 'equal_weight' 
 assert abs(hrp_allocation(cov).sum() - 1.0) < 1e-6 and abs(risk_parity(cov).sum() - 1.0) < 1e-6
 print('  Baselines OK')
 print(f'  Sharpe OK ({compute_sharpe(np.random.randn(252) * 0.01 + 3e-4):.3f})')
+_rng = np.random.default_rng(0)
+_dsr = deflated_sharpe_ratio(_rng.normal(3e-4, 0.01, size=400),
+                             trial_sharpes=_rng.normal(0.5, 0.3, size=20))
+assert _dsr is not None and 0.0 <= _dsr <= 1.0, _dsr
+_pbo = cscv_pbo(_rng.normal(0.0, 0.01, size=(400, 8)), n_splits=8)['pbo']
+assert 0.0 <= _pbo <= 1.0, _pbo
+print(f'  DSR/PBO OK (DSR={_dsr:.3f}, PBO={_pbo:.3f})')
 print('  Lightweight smoke test OK', flush=True)
 os._exit(0)
 
