@@ -40,9 +40,9 @@ paper/*.fls
 paper/*.fdb_latexmk
 paper/*.synctex.gz
 
-# IDE
-.vscode/
-.claude/
+# IDE / local tool config: ignore all hidden directories (keep .github tracked)
+.*/
+!.github/
 .drive_token.pkl
 *.b64
 *.pkl
@@ -51,4 +51,3 @@ paper/*.synctex.gz
 *.pdf
 results/figures/*.png
 supplementary.zip
-.azure_env_build/
