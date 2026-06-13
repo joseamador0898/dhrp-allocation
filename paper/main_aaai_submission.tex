@@ -430,13 +430,17 @@ standard deviation; classical methods are deterministic and contribute a
 single value.
 
 \paragraph{Statistical battery.}
-Five families: PSR \citep{Bailey2012PSR}; HAC t-statistics
+Six families: PSR \citep{Bailey2012PSR}; HAC t-statistics
 \citep{NeweyWest1987}; Fama-French three- and five-factor alphas plus
 momentum \citep{FamaFrench2015,Carhart1997}; stationary block-bootstrap
 pairwise Sharpe-difference tests \citep{PolitisRomano1994} with
 Holm-Bonferroni correction \citep{Holm1979} and Diebold-Mariano tests
-\citep{DieboldMariano1995}; and the SPA \citep{Hansen2005} and MCS
-\citep{HansenLundeNason2011} multi-method tests at $\alpha = 0.05$.
+\citep{DieboldMariano1995}; the SPA \citep{Hansen2005} and MCS
+\citep{HansenLundeNason2011} multi-method tests at $\alpha = 0.05$; and,
+to guard against selection under multiple testing, the Deflated Sharpe
+Ratio \citep{Bailey2014DSR} and the Probability of Backtest Overfitting
+(PBO) estimated by combinatorially symmetric cross-validation
+\citep{Bailey2017PBO}.
 
 \paragraph{Reproducibility.}
 The release ships Croissant 1.1 metadata \citep{Akhtar2024Croissant},
@@ -547,6 +551,18 @@ DHRP's Sharpe stays at or above 0.9 at 10 basis points per trade, degrades
 to roughly 0.5 at 50 basis points, and breaks even against equal weight
 near 30 basis points.
 
+% TODO(after rerun): paste DSR per method (results/{universe}_stats.csv,
+% column DSR) and PBO per universe (results/pbo_summary.csv) into the
+% bracketed slots below, then delete this comment.
+To control for selection across the method panel, we report the Deflated
+Sharpe Ratio (DSR) and the Probability of Backtest Overfitting (PBO). On
+commodities, DHRP retains a DSR of $[\text{DSR}_{\text{cmd}}]$ after
+deflating for the configurations searched, and the panel PBO is
+$[\text{PBO}_{\text{cmd}}]$ ($[\,n\,]$ CSCV splits), indicating that
+selecting the best backtested allocator is $[\text{not~}]$driven by
+overfitting. Per-universe DSR and PBO values are reported in the
+supplementary material.
+
 \subsection{Ablations}
 \label{sec:results_ablations}
 
@@ -632,9 +648,10 @@ universe holds 10 US-traded ETFs; behavior at the scale of hundreds of
 single names, where the assignment matrix grows large and news coverage is
 even more uneven, is untested. The out-of-sample window from July 2020 to
 April 2026 contains one rate-hike drawdown and one crypto cycle, and while
-PSR guards against some sample-specific luck
-\citep{Bailey2012PSR,Bailey2014DSR}, a longer horizon would be more
-convincing. The commodity headline rests on sample Sharpe rather than a
+the PSR, the Deflated Sharpe Ratio, and the PBO guard against
+sample-specific luck and selection under multiple testing
+\citep{Bailey2012PSR,Bailey2014DSR,Bailey2017PBO}, a longer horizon would
+be more convincing. The commodity headline rests on sample Sharpe rather than a
 significant factor alpha, as discussed above, and our cost analysis uses
 flat per-trade basis points without market impact. On the text side, the
 negative result is specific to one encoder and one aggregation scheme;
